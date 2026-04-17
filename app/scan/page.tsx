@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, Suspense } from 'react';
+import { useState, useRef, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { ScanResult, CategoryResult, CheckItem } from '@/lib/scanPrompt';
 
@@ -257,14 +257,16 @@ function CategoryCard({
 // ── Inner page (needs useSearchParams → must be in Suspense) ─
 function ScanPageInner() {
   const searchParams = useSearchParams();
-  const [url, setUrl] = useState('');
-  const [loading, setLoading] = useState(false);
+  const initialUrl = searchParams.get('url') ?? '';
+  const [url, setUrl] = useState(initialUrl);
+  const [loading, setLoading] = useState(!!initialUrl.trim());
   const [error, setError] = useState('');
   const [result, setResult] = useState<ScanResult | null>(null);
   const [scannedUrl, setScannedUrl] = useState('');
   const [streamStage, setStreamStage] = useState<StageKey | null>(null);
   const [streamMessage, setStreamMessage] = useState('');
   const resultsRef = useRef<HTMLDivElement>(null);
+  const autoRanRef = useRef(false);
 
   const utmParams = {
     utm_source: searchParams.get('utm_source'),
@@ -274,9 +276,7 @@ function ScanPageInner() {
     utm_term: searchParams.get('utm_term'),
   };
 
-  async function handleScan(e: React.FormEvent) {
-    e.preventDefault();
-    if (!url.trim()) return;
+  async function runScan(urlStr: string) {
     setLoading(true);
     setError('');
     setResult(null);
@@ -287,7 +287,7 @@ function ScanPageInner() {
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim(), ...utmParams }),
+        body: JSON.stringify({ url: urlStr.trim(), ...utmParams }),
       });
 
       if (!res.body) {
@@ -346,6 +346,24 @@ function ScanPageInner() {
       setLoading(false);
     }
   }
+
+  async function handleScan(e: React.FormEvent) {
+    e.preventDefault();
+    if (!url.trim()) return;
+    await runScan(url);
+  }
+
+  useEffect(() => {
+    if (autoRanRef.current) return;
+    const paramUrl = searchParams.get('url') ?? '';
+    if (!paramUrl.trim()) {
+      setLoading(false);
+      return;
+    }
+    autoRanRef.current = true;
+    runScan(paramUrl);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const scoreLabel = result
     ? result.overallScore >= 70
