@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-plus-jakarta);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-serif: var(--font-instrument-serif);
+}
+
+body {
+  font-family: var(--font-plus-jakarta), Arial, sans-serif;
+  background: #060d18;
+  color: #f1f5f9;
+}
