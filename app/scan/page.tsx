@@ -229,10 +229,10 @@ function CategoryCard({
               </div>
               <div className="absolute inset-0 flex items-center justify-center">
                 <a
-                  href="https://app.prequire.ai/signup"
+                  href="https://prequire.ai/#pricing"
                   className="bg-orange-500 hover:bg-orange-400 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
                 >
-                  Sign up free to unlock
+                  Get full access →
                 </a>
               </div>
             </li>
@@ -440,10 +440,10 @@ function ScanPageInner() {
               </p>
             </div>
             <a
-              href="https://app.prequire.ai/signup"
+              href="https://prequire.ai/#pricing"
               className="sm:ml-auto flex-shrink-0 bg-orange-500 hover:bg-orange-400 text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm"
             >
-              Get full report free →
+              Get full access →
             </a>
           </div>
 
@@ -466,14 +466,14 @@ function ScanPageInner() {
               Ready to fix your AEO gaps?
             </h3>
             <p className="text-slate-400 text-sm mb-5">
-              Sign up free to unlock all recommendations, track your score
-              over time, and extract shadow queries for your niche.
+              Unlock all recommendations, track your score over time, and
+              extract shadow queries for your niche with a full Prequire account.
             </p>
             <a
-              href="https://app.prequire.ai/signup"
+              href="https://prequire.ai/#pricing"
               className="inline-block bg-orange-500 hover:bg-orange-400 text-white font-semibold px-8 py-3 rounded-xl transition-colors"
             >
-              Sign up free — no credit card
+              See plans &amp; pricing
             </a>
           </div>
         </section>
