@@ -6,6 +6,7 @@ import {
   ScanResult,
 } from '@/lib/scanPrompt';
 import { logScanLead } from '@/lib/supabase/scanLeads';
+import { saveScanResult } from '@/lib/supabase/scanResults';
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -16,12 +17,21 @@ function encode(event: Record<string, unknown>): Uint8Array {
 }
 
 export async function POST(req: NextRequest) {
+  // Check for internal token — Quinn calls include X-Internal-Token
+  const internalToken = req.headers.get('x-internal-token');
+  const isInternal =
+    !!internalToken &&
+    !!process.env.SCAN_INTERNAL_TOKEN &&
+    internalToken === process.env.SCAN_INTERNAL_TOKEN;
+
   const stream = new ReadableStream({
     async start(controller) {
       try {
         const body = await req.json();
         const {
           url,
+          email,
+          ghl_contact_id,
           utm_source,
           utm_medium,
           utm_campaign,
@@ -119,7 +129,17 @@ export async function POST(req: NextRequest) {
           return;
         }
 
-        // Log lead (non-blocking — don't await, don't block stream)
+        // Persist full result and get scan_id
+        const scanId = await saveScanResult({
+          url: normalizedUrl,
+          overall_score: result.overallScore,
+          result_json: result,
+          email: isInternal ? (email ?? null) : null,
+          source: isInternal ? 'quinn' : 'public',
+          ghl_contact_id: isInternal ? (ghl_contact_id ?? null) : null,
+        });
+
+        // Log lead to scan_leads (existing table — non-blocking)
         logScanLead({
           url: normalizedUrl,
           overall_score: result.overallScore,
@@ -133,7 +153,11 @@ export async function POST(req: NextRequest) {
         // Stage 4 — complete
         controller.enqueue(encode({
           stage: 'complete',
-          data: { result, url: normalizedUrl },
+          data: {
+            result,
+            url: normalizedUrl,
+            scan_id: scanId,
+          },
         }));
         controller.close();
       } catch (err) {
@@ -151,7 +175,7 @@ export async function POST(req: NextRequest) {
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
       'Transfer-Encoding': 'chunked',
-      'X-Accel-Buffering': 'no', // disable proxy buffering (Nginx/Cloudflare)
+      'X-Accel-Buffering': 'no',
     },
   });
 }
