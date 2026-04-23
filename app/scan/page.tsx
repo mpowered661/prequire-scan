@@ -3,12 +3,8 @@
 import { useState, useRef, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { ScanResult } from '@/lib/scanPrompt';
-import {
-  ScoreGauge,
-  CategoryCard,
-  CATEGORIES,
-  scoreLabel,
-} from '@/components/ScanDisplay';
+import { ScoreGauge, CategoryCard } from '@/components/ScanDisplay';
+import { CATEGORIES, scoreLabel } from '@/lib/scanUtils';
 
 // ── Streaming progress ───────────────────────────────────────
 const STAGES = [

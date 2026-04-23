@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { getScanResult } from '@/lib/supabase/scanResults';
-import { ScoreGauge, CategoryCard, CATEGORIES, scoreLabel } from '@/components/ScanDisplay';
+import { ScoreGauge, CategoryCard } from '@/components/ScanDisplay';
+import { CATEGORIES, scoreLabel } from '@/lib/scanUtils';
 
 interface Props {
   params: Promise<{ scan_id: string }>;

@@ -1,19 +1,9 @@
 'use client';
 
 import type { ScanResult, CategoryResult, CheckItem } from '@/lib/scanPrompt';
+export type { ScanResult, CategoryResult, CheckItem };
 
-export { ScanResult, CategoryResult, CheckItem };
-
-export const CATEGORIES: {
-  key: keyof ScanResult['categories'];
-  label: string;
-  icon: string;
-}[] = [
-  { key: 'contentQuality', label: 'Content Quality', icon: '📝' },
-  { key: 'schemaMarkup', label: 'Schema Markup', icon: '🏗️' },
-  { key: 'performance', label: 'Performance', icon: '⚡' },
-  { key: 'accessibility', label: 'Accessibility', icon: '♿' },
-];
+export { CATEGORIES, scoreLabel } from '@/lib/scanUtils';
 
 export function ScoreGauge({ score }: { score: number }) {
   const radius = 54;
@@ -154,12 +144,4 @@ export function CategoryCard({
       </div>
     </div>
   );
-}
-
-export function scoreLabel(score: number): string {
-  return score >= 70
-    ? 'Strong AEO readiness'
-    : score >= 45
-    ? 'Moderate — gaps to address'
-    : 'Significant AEO gaps';
 }
