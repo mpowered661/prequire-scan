@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
 
         const response = await anthropic.messages.create({
           model: 'claude-sonnet-4-5',
-          max_tokens: 2048,
+          max_tokens: 4096,
           system: [
             {
               type: 'text',
@@ -121,6 +121,7 @@ export async function POST(req: NextRequest) {
             .trim();
           result = JSON.parse(cleaned) as ScanResult;
         } catch {
+          console.error('[scan] JSON parse failed. stop_reason:', response.stop_reason, 'raw:', rawText.slice(0, 300));
           controller.enqueue(encode({
             stage: 'error',
             message: 'Analysis failed to parse. Please try again.',
