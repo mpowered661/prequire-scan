@@ -90,15 +90,9 @@ export async function POST(req: NextRequest) {
         controller.enqueue(encode({ stage: 'analyzing', message: 'Analyzing with Claude...' }));
 
         const response = await anthropic.messages.create({
-          model: 'claude-sonnet-4-5',
+          model: 'claude-haiku-4-5-20251001',
           max_tokens: 4096,
-          system: [
-            {
-              type: 'text',
-              text: SCAN_SYSTEM_PROMPT,
-              cache_control: { type: 'ephemeral' },
-            },
-          ],
+          system: SCAN_SYSTEM_PROMPT,
           messages: [
             {
               role: 'user',
@@ -167,10 +161,15 @@ export async function POST(req: NextRequest) {
         }));
         controller.close();
       } catch (err) {
-        console.error('[scan API] caught error:', err);
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[scan API] caught error:', msg);
         controller.enqueue(encode({
           stage: 'error',
-          message: 'Internal server error. Please try again.',
+          message: msg.includes('api_key') || msg.includes('auth') || msg.includes('401')
+            ? 'API key error — contact support.'
+            : msg.includes('model') || msg.includes('not_found')
+            ? 'Model error: ' + msg
+            : 'Internal server error. Please try again.',
         }));
         controller.close();
       }
