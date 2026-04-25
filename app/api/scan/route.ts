@@ -161,15 +161,10 @@ export async function POST(req: NextRequest) {
         }));
         controller.close();
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[scan API] caught error:', msg);
+        console.error('[scan API] caught error:', err);
         controller.enqueue(encode({
           stage: 'error',
-          message: msg.includes('api_key') || msg.includes('auth') || msg.includes('401')
-            ? 'API key error — contact support.'
-            : msg.includes('model') || msg.includes('not_found')
-            ? 'Model error: ' + msg
-            : 'Internal server error. Please try again.',
+          message: 'Internal server error. Please try again.',
         }));
         controller.close();
       }
