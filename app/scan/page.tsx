@@ -67,6 +67,8 @@ function ScanProgress({ stage, message }: { stage: StageKey | null; message: str
 function ScanPageInner() {
   const searchParams = useSearchParams();
   const initialUrl = searchParams.get('url') ?? '';
+  const pubEmail    = searchParams.get('email') ?? '';
+  const pubName     = searchParams.get('name')  ?? '';
   const [url, setUrl] = useState(initialUrl);
   const [loading, setLoading] = useState(!!initialUrl.trim());
   const [error, setError] = useState('');
@@ -145,6 +147,14 @@ function ScanPageInner() {
               () => resultsRef.current?.scrollIntoView({ behavior: 'smooth' }),
               300
             );
+            // Queue audit email via GHL if email was passed from landing page
+            if (pubEmail) {
+              fetch('https://app.prequire.ai/api/audit/public-audit.php', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ url: payload.url, email: pubEmail, name: pubName }),
+              }).catch(() => {});
+            }
             return;
           }
 
