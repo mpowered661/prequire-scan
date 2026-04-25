@@ -130,15 +130,20 @@ export async function POST(req: NextRequest) {
           return;
         }
 
-        // Persist full result and get scan_id
-        const scanId = await saveScanResult({
-          url: normalizedUrl,
-          overall_score: result.overallScore,
-          result_json: result,
-          email: isInternal ? (email ?? null) : null,
-          source: isInternal ? 'quinn' : 'public',
-          ghl_contact_id: isInternal ? (ghl_contact_id ?? null) : null,
-        });
+        // Persist full result and get scan_id (non-blocking — missing table won't kill scan)
+        let scanId: string | null = null;
+        try {
+          scanId = await saveScanResult({
+            url: normalizedUrl,
+            overall_score: result.overallScore,
+            result_json: result,
+            email: isInternal ? (email ?? null) : null,
+            source: isInternal ? 'quinn' : 'public',
+            ghl_contact_id: isInternal ? (ghl_contact_id ?? null) : null,
+          });
+        } catch (persistErr) {
+          console.error('[scan] saveScanResult failed (non-fatal):', persistErr);
+        }
 
         // Log lead to scan_leads (existing table — non-blocking)
         logScanLead({
