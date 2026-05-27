@@ -71,10 +71,20 @@ export function generateFixes(results: CrawlerResult[], stack: DetectedStack): F
               'Or go to Wordfence → Firewall → Allowlisted IPs for known bot IP ranges',
               'Re-run this check to confirm bots are no longer blocked',
             ]
+          : stack.waf === 'Sucuri'
+          ? [
+              'Log in to the Sucuri WAF dashboard at https://waf.sucuri.net and select your website',
+              'Go to the Security tab → Allowlist — add each blocked crawler\'s exact User-Agent string as an allowlist entry',
+              'For IP-based allowlisting: find each crawler\'s published IP ranges (e.g., openai.com/gptbot for GPTBot, developers.facebook.com/docs/sharing/webmasters/crawler for Meta) and add them under the IP Allowlist',
+              'If blocking persists: go to Settings → Security Level — "Paranoid" or "High" can block bot traffic broadly; switch to "Custom" and add precise bypass rules for verified AI crawlers',
+              'Note: if you also have the Sucuri WordPress plugin installed, it has a separate allowlist from the cloud WAF — check WordPress admin → Sucuri Security → Firewall → Allowlist and configure both',
+              'Re-run this check to confirm bots are no longer blocked',
+            ]
           : [
-              `Locate where ${waf} is configured to block bot traffic`,
-              'Add exceptions for the affected crawler User-Agent strings',
-              'Consult your WAF or security plugin documentation for bot allowlist configuration',
+              `Log in to your ${waf} control panel`,
+              'Find the IP allowlist, User-Agent allowlist, or bot management settings',
+              `Add an exception for each blocked crawler's User-Agent string (listed above under "Affects")`,
+              'Consult your WAF documentation for the correct allowlist syntax',
               'Re-run this check to confirm bots are no longer blocked',
             ],
       fix_platform: stack.waf,

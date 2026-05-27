@@ -170,6 +170,35 @@ export default async function ReadinessPage({ params }: Props) {
                     </span>
                     <h3 className="font-semibold text-sm leading-snug">{fix.issue}</h3>
                   </div>
+                  {(() => {
+                    const csrSample = report.crawler_results.find(
+                      (r) =>
+                        fix.affected_crawlers.includes(r.crawler_name) &&
+                        r.tests.content_delivery.status === 'client_side_rendered',
+                    );
+                    if (!csrSample) return null;
+                    const cd = csrSample.tests.content_delivery;
+                    const fmtBytes = (b: number) =>
+                      b >= 1024 ? `${Math.round(b / 1024)} KB` : `${b} B`;
+                    return (
+                      <div className="grid grid-cols-3 gap-2 mb-3">
+                        <div className="bg-slate-800/60 rounded-lg p-2.5 text-center">
+                          <div className="text-base font-bold text-slate-200">{fmtBytes(cd.html_bytes)}</div>
+                          <div className="text-xs text-slate-500 mt-0.5">Page size sent</div>
+                        </div>
+                        <div className="bg-slate-800/60 rounded-lg p-2.5 text-center">
+                          <div className="text-base font-bold text-slate-200">{fmtBytes(cd.text_bytes)}</div>
+                          <div className="text-xs text-slate-500 mt-0.5">Readable text</div>
+                        </div>
+                        <div className="bg-amber-500/20 border border-amber-500/30 rounded-lg p-2.5 text-center">
+                          <div className="text-base font-bold text-amber-300">
+                            {(cd.text_html_ratio * 100).toFixed(1)}%
+                          </div>
+                          <div className="text-xs text-amber-500/80 mt-0.5">Text ratio</div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <p className="text-slate-400 text-sm mb-3 leading-relaxed">{fix.fix_summary}</p>
                   <details className="group">
                     <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-300 select-none">
