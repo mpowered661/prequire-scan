@@ -1,5 +1,31 @@
 @AGENTS.md
 
+## Coding Philosophy
+
+### Structure prompts like acceptance criteria, not task descriptions
+
+Learned from the AEO Readiness Check build (2026-05-27): prompts that include
+**itemized coverage targets, per-module scope, and explicit pass criteria** produce
+substantially better outputs than loose descriptions. The difference is not marginal.
+
+Apply this structure to every feature prompt in this project:
+
+```
+Feature: [name]
+Modules to build: [list with file paths]
+Acceptance criteria per module:
+  - [module]: [what done looks like, what tests must pass]
+Test scope: [which functions, what fixture types, how many tests minimum]
+Verify step: [the exact curl/command that confirms it works end-to-end]
+```
+
+**Why it works:** Structure forces agreement on scope before a line is written.
+It eliminates "I assumed you meant..." on both sides. It also makes mid-build
+corrections cheap — a criteria mismatch surfaces in planning, not after 200 lines.
+
+**When to skip it:** One-off scripts, pure refactors with no new behavior,
+hotfixes where the broken behavior is already defined by a failing test.
+
 ## Security Debt
 
 ### scan_results and scan_leads RLS hardening

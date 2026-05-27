@@ -184,11 +184,11 @@ export default async function ReadinessPage({ params }: Props) {
                       <div className="grid grid-cols-3 gap-2 mb-3">
                         <div className="bg-slate-800/60 rounded-lg p-2.5 text-center">
                           <div className="text-base font-bold text-slate-200">{fmtBytes(cd.html_bytes)}</div>
-                          <div className="text-xs text-slate-500 mt-0.5">Page size sent</div>
+                          <div className="text-xs text-slate-400 mt-0.5">Page size sent</div>
                         </div>
                         <div className="bg-slate-800/60 rounded-lg p-2.5 text-center">
                           <div className="text-base font-bold text-slate-200">{fmtBytes(cd.text_bytes)}</div>
-                          <div className="text-xs text-slate-500 mt-0.5">Readable text</div>
+                          <div className="text-xs text-slate-400 mt-0.5">Readable text</div>
                         </div>
                         <div className="bg-amber-500/20 border border-amber-500/30 rounded-lg p-2.5 text-center">
                           <div className="text-base font-bold text-amber-300">
