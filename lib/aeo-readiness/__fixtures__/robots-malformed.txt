@@ -1,0 +1,6 @@
+This line has no colon so it is malformed
+User-agent: GPTBot
+Disallow: /private/
+Also bad
+User-agent: *
+Allow: /

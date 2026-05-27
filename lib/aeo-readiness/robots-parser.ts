@@ -31,7 +31,7 @@ function parseRobotsTxt(raw: string): ParsedRobotsTxt {
       // Starting a new user-agent block resets the current agent list
       // only if the previous line was NOT also a user-agent directive.
       // Consecutive User-agent lines are grouped (standard behaviour).
-      if (!inBlock) {
+      if (inBlock) {
         currentAgents = [];
       }
       currentAgents.push(value.toLowerCase());
