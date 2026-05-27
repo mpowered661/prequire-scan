@@ -153,19 +153,46 @@ export function generateFixes(results: CrawlerResult[], stack: DetectedStack): F
   );
   if (csrPartial.length > 0) {
     const affected = crawlerNames(csrPartial);
+    const sample = csrPartial[0].tests.content_delivery;
+    const htmlDesc =
+      sample.html_bytes >= 1024
+        ? `${Math.round(sample.html_bytes / 1024)} KB`
+        : `${sample.html_bytes} bytes`;
+    const textDesc =
+      sample.text_bytes < 100
+        ? `only ${sample.text_bytes} bytes`
+        : `only ${Math.round(sample.text_bytes / 1024)} KB`;
+    const ratioStr = (sample.text_html_ratio * 100).toFixed(1);
+
+    const genericSteps: string[] = [
+      `▸ Next.js App Router: Content pages use Server Components by default — ensure data fetching happens in async server components, not inside client components with useEffect. Remove "use client" from components that hold your main content and move state down to leaf components only.`,
+      `▸ Next.js App Router (static): Add export const revalidate = 3600 or use generateStaticParams() + export const dynamic = "force-static" to build pages at deploy time. Bots receive pre-rendered HTML on every request.`,
+      `▸ Next.js Pages Router: Replace client-side useEffect data fetching with getServerSideProps (SSR, per request) or getStaticProps (SSG, build time). All content must exist in the returned props — nothing fetched after the page loads.`,
+      `▸ React SPA (Vite / Create React App): Add a prerender layer — options: (1) migrate to Next.js for full SSR, (2) add Prerender.io or Rendertron as a CDN middleware that serves rendered HTML to bot User-Agents, (3) for static sites, use react-snap or vite-plugin-prerender to generate HTML at build time.`,
+      `▸ Vue / Nuxt: Use Nuxt.js for SSR. In Nuxt 3, useFetch() and useAsyncData() run server-side and content appears in the initial HTML. For fully static output, run nuxt generate and deploy the dist/ directory.`,
+    ];
+
+    const wordpressSteps: string[] = [
+      `▸ WordPress: Your theme is rendering content via JavaScript. Identify the page builder in use (Elementor, Divi, Beaver Builder) and check if it offers a "server-side rendering" or "static HTML fallback" option in its settings.`,
+      `▸ WordPress: For crawlable landing pages and content pages, switch from your JS page builder to the native block editor (Gutenberg). Gutenberg pages serve full HTML with no JavaScript dependency — content is readable by any bot.`,
+      `▸ WordPress: Install LiteSpeed Cache or WP Super Cache — both support a bot prerender mode that delivers a cached static HTML snapshot to crawlers while humans receive the full JS experience. Enable "Cache for bots" or equivalent option.`,
+    ];
+
+    const platformSteps = stack.cms === 'WordPress' ? wordpressSteps : genericSteps;
+
     fixes.push({
       priority: topPriority(affected, 'medium'),
-      issue: 'Content not accessible — page appears client-side rendered',
+      issue: 'Content invisible to AI crawlers — page is client-side rendered',
       affected_crawlers: affected,
-      fix_summary:
-        'The HTML returned to crawlers contains very little text. Your page likely relies on JavaScript to render content, which AI crawlers cannot execute.',
+      fix_summary: `When a human visits this page, their browser downloads ${htmlDesc} of HTML and then executes JavaScript to load the actual content. AI crawlers do not execute JavaScript — they only read the initial HTML response. Right now they see ${textDesc} of readable text (${ratioStr}% of the page), primarily <script> and <link> tags pointing to JavaScript bundles. Everything humans see after page load — headings, body copy, FAQs, structured data — is invisible to AI engines.`,
       fix_steps: [
-        'Verify what your server sends to a bot User-Agent: curl -A "GPTBot/1.2" yourdomain.com',
-        'Switch to server-side rendering (SSR) or static generation (SSG) for content pages',
-        'If using Next.js or Nuxt.js: use getServerSideProps or getStaticProps to pre-render content',
-        'If using a SPA: add a prerendering service (Prerender.io, Rendertron) as middleware',
-        'Ensure the HTML response includes headings, body copy, and structured data',
-        'Re-run this check after SSR or prerendering is deployed',
+        `Verify the problem: curl -sA "GPTBot/1.2" https://yourdomain.com and compare what you see to your browser view. If the output has no <h1>, <p>, or article text in the HTML source, bots are receiving an empty shell.`,
+        `Check your ratio: curl -s https://yourdomain.com | wc -c gives total bytes. If the response is mostly <script src="..."> tags with little readable text, that confirms client-side rendering.`,
+        ...platformSteps,
+        `Interim fix — add JSON-LD structured data: Even a near-empty page can include <script type="application/ld+json"> in the server-rendered <head>. AI crawlers extract JSON-LD schema (Article, Person, Organization, FAQPage) and use it for citations even when the visible body is empty. Use schema.org/Article for content pages, schema.org/Person or Organization for brand pages.`,
+        `Interim fix — add a <noscript> block: Place a concise summary of your page's key content inside <noscript>...</noscript> in your HTML template. AI crawlers read noscript content. Include your core value proposition, main topics, and one call to action (under 400 words).`,
+        `After deploying SSR: run curl -sA "GPTBot/1.2" https://yourdomain.com and confirm that <h1>, <p> tags, and your main content appear directly in the HTML source — not behind script tags.`,
+        'Re-run this AEO check to confirm the fix — the text/HTML ratio should rise above 5% and your score will increase',
       ],
       fix_platform: stack.cms,
     });
