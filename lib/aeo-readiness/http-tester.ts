@@ -2,7 +2,7 @@ import type { RawCrawlerFetch, HttpTesterOptions } from './types';
 import { getActiveCrawlers, BROWSER_UA, PREQUIRE_SUFFIX } from './crawlers';
 
 const MAX_REDIRECTS = 5;
-const TIMEOUT_MS = 10000;
+const TIMEOUT_MS = 20000;
 const RATE_LIMITED_DOMAINS = new Set<string>();
 
 function getDomain(url: string): string {
@@ -77,7 +77,7 @@ async function fetchWithUA(
       response_time_ms,
       headers: {},
       body: '',
-      error: isTimeout ? 'Request timed out after 10s' : String(err),
+      error: isTimeout ? `Request timed out after ${TIMEOUT_MS / 1000}s` : String(err),
     };
   }
 }

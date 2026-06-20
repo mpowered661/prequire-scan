@@ -8,8 +8,8 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
-const ANON_HOURLY  = 3;
-const ANON_DAILY   = 10;
+const ANON_HOURLY  = 5;
+const ANON_DAILY   = 25;
 const AUTH_HOURLY  = 20;
 const AUTH_DAILY   = 100;
 
@@ -73,6 +73,8 @@ async function checkRateLimit(
 
   return { allowed: true };
 }
+
+export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
   try {
