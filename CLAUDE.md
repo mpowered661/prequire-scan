@@ -30,14 +30,21 @@ hotfixes where the broken behavior is already defined by a failing test.
 
 ### scan_results and scan_leads RLS hardening
 
-**Status:** Out of scope — document and address separately.
+**Status: RESOLVED 2026-07-03.** Both tables now have RLS enabled with no
+anon policies (deny-all; service-role only), exactly per the recommended fix
+below. `scan_results` was hardened in an earlier pass; `scan_leads` was closed
+2026-07-03 via Supabase migration `enable_rls_scan_leads` (applied during the
+full-system audit — verified in pg_catalog and via security advisors).
 
-**Problem:** Both `scan_results` and `scan_leads` tables have RLS **disabled**.
-- Writes are safe: all inserts use the service role key (server-side only).
-- Reads are **not protected**: any client holding the Supabase anon key can
+**Original problem (for the record):** Both tables had RLS **disabled**.
+- Writes were safe: all inserts use the service role key (server-side only).
+- Reads were **not protected**: any client holding the Supabase anon key could
   `SELECT *` and enumerate all scanned URLs and scores with no filter required.
-- Risk level: **medium** — no PII in these tables, but exposes customer
-  scanning patterns and could leak competitive intelligence.
+- Risk level was **medium** — CORRECTION (2026-07-03): the original "no PII in
+  these tables" claim was wrong. `scan_results` contains `email` and
+  `ghl_contact_id` columns, and `scan_leads` contains `email` and `ip_address`.
+  The exposure was PII-bearing, which makes the (now applied) fix more
+  important, not less.
 
 **Recommended fix:**
 ```sql
