@@ -28,13 +28,14 @@ function robotsBlocked(name: string): CrawlerResult {
   };
 }
 
-function httpBlocked(name: string, statusCode = 403, waf: string | null = null): CrawlerResult {
+function httpRefused(name: string, statusCode = 403, waf: string | null = null): CrawlerResult {
   return {
     crawler_name: name, user_agent: 'Test/1.0',
-    overall_status: 'blocked', blocker_layer: waf ? 'waf' : 'server_error', blocker_detail: `HTTP ${statusCode}`,
+    overall_status: 'undeterminable', blocker_layer: waf ? 'waf' : 'unknown',
+    blocker_detail: `HTTP ${statusCode} refusal — undeterminable via UA simulation`,
     tests: {
       ...baseFetch(),
-      http_response: { status_code: statusCode, response_time_ms: 100, server: null, waf_detected: waf, status: 'blocked' },
+      http_response: { status_code: statusCode, response_time_ms: 100, server: null, waf_detected: waf, status: 'refused' },
     },
   };
 }
@@ -42,7 +43,7 @@ function httpBlocked(name: string, statusCode = 403, waf: string | null = null):
 function jsChallenged(name: string): CrawlerResult {
   return {
     crawler_name: name, user_agent: 'Test/1.0',
-    overall_status: 'partial', blocker_layer: 'cdn', blocker_detail: 'JS challenge',
+    overall_status: 'undeterminable', blocker_layer: 'cdn', blocker_detail: 'Browser challenge — undeterminable via UA simulation',
     tests: {
       ...baseFetch(),
       http_response: { status_code: 200, response_time_ms: 100, server: null, waf_detected: null, status: 'challenged' },
@@ -138,14 +139,33 @@ describe('generateFixes — robots.txt blocking', () => {
   });
 });
 
-describe('generateFixes — HTTP blocking', () => {
-  it('generates a fix for HTTP 403 blocks', () => {
-    const fixes = generateFixes([httpBlocked('GPTBot', 403, null)], EMPTY_STACK);
+describe('generateFixes — HTTP refusals (undeterminable)', () => {
+  it('generates a fix for HTTP 403 refusals', () => {
+    const fixes = generateFixes([httpRefused('GPTBot', 403, null)], EMPTY_STACK);
     expect(fixes.some((f) => f.issue.includes('403'))).toBe(true);
   });
 
+  it('keeps the fix copy tentative — never claims the real crawler is blocked', () => {
+    const fixes = generateFixes([httpRefused('GPTBot', 403, null)], EMPTY_STACK);
+    const fix = fixes.find((f) => f.issue.includes('403'))!;
+    expect(fix.issue.toLowerCase()).toMatch(/undeterminable/);
+    expect(fix.fix_summary.toLowerCase()).toMatch(/cannot determine/);
+  });
+
+  it('caps priority at high (not critical) even for critical bots', () => {
+    const fixes = generateFixes([httpRefused('GPTBot', 403, null)], EMPTY_STACK);
+    const fix = fixes.find((f) => f.issue.includes('403'))!;
+    expect(fix.priority).toBe('high');
+  });
+
+  it('uses medium priority when only non-critical bots are refused', () => {
+    const fixes = generateFixes([httpRefused('Amazonbot', 403, null)], EMPTY_STACK);
+    const fix = fixes.find((f) => f.issue.includes('403'))!;
+    expect(fix.priority).toBe('medium');
+  });
+
   it('generates Cloudflare-specific steps when Cloudflare WAF detected in stack', () => {
-    const fixes = generateFixes([httpBlocked('GPTBot', 403, 'Cloudflare')], { ...EMPTY_STACK, waf: 'Cloudflare' });
+    const fixes = generateFixes([httpRefused('GPTBot', 403, 'Cloudflare')], { ...EMPTY_STACK, waf: 'Cloudflare' });
     const fix = fixes.find((f) => f.issue.includes('403'))!;
     const steps = fix.fix_steps.join(' ').toLowerCase();
     expect(steps).toMatch(/cloudflare/);
@@ -153,17 +173,33 @@ describe('generateFixes — HTTP blocking', () => {
   });
 
   it('generates Wordfence-specific steps when Wordfence WAF detected', () => {
-    const fixes = generateFixes([httpBlocked('GPTBot', 403, 'Wordfence')], { ...EMPTY_STACK, waf: 'Wordfence' });
+    const fixes = generateFixes([httpRefused('GPTBot', 403, 'Wordfence')], { ...EMPTY_STACK, waf: 'Wordfence' });
     const fix = fixes.find((f) => f.issue.includes('403'))!;
     const steps = fix.fix_steps.join(' ').toLowerCase();
     expect(steps).toMatch(/wordfence/);
   });
 
   it('generates generic steps and null fix_platform when WAF is unknown', () => {
-    const fixes = generateFixes([httpBlocked('GPTBot', 403, null)], EMPTY_STACK);
+    const fixes = generateFixes([httpRefused('GPTBot', 403, null)], EMPTY_STACK);
     const fix = fixes.find((f) => f.issue.includes('403'))!;
     expect(fix.fix_steps.length).toBeGreaterThan(0);
     expect(fix.fix_platform).toBeNull();
+  });
+});
+
+describe('generateFixes — interstitial bodies are not trusted', () => {
+  it('does not raise a meta-tag fix when the meta came from a challenged response', () => {
+    const r = jsChallenged('GPTBot');
+    r.tests.meta_tags = { robots_directive: 'noindex,nofollow', ai_blocking_directives: [], canonical: null, status: 'blocked_via_meta' };
+    const fixes = generateFixes([r], EMPTY_STACK);
+    expect(fixes.some((f) => f.issue.toLowerCase().includes('meta'))).toBe(false);
+  });
+
+  it('does not raise a cloaking fix when the bot body was a refusal page', () => {
+    const r = httpRefused('GPTBot', 403, 'Cloudflare');
+    r.tests.cloaking = { divergence_pct: 0.9, status: 'potential_cloaking' };
+    const fixes = generateFixes([r], EMPTY_STACK);
+    expect(fixes.some((f) => f.issue.toLowerCase().includes('cloaking'))).toBe(false);
   });
 });
 

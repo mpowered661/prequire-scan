@@ -91,6 +91,26 @@ describe('computeScore', () => {
     expect(new Set(scores).size).toBe(1);
   });
 
+  it('excludes undeterminable from the denominator entirely', () => {
+    const crawlers = [def('GPTBot', 'critical'), def('Amazonbot', 'other')];
+    // GPTBot undeterminable (excluded) + Amazonbot accessible → 1/1 → 100
+    expect(computeScore(
+      [result('GPTBot', 'undeterminable'), result('Amazonbot', 'accessible')],
+      crawlers,
+    )).toBe(100);
+    // GPTBot undeterminable (excluded) + Amazonbot blocked → 0/1 → 0
+    expect(computeScore(
+      [result('GPTBot', 'undeterminable'), result('Amazonbot', 'blocked')],
+      crawlers,
+    )).toBe(0);
+  });
+
+  it('returns 0 when every crawler is undeterminable (no determinable signals)', () => {
+    const crawlers = [def('GPTBot', 'critical'), def('ClaudeBot', 'critical')];
+    const results = crawlers.map((c) => result(c.name, 'undeterminable'));
+    expect(computeScore(results, crawlers)).toBe(0);
+  });
+
   it('ignores crawlers in results that have no matching definition', () => {
     const crawlers = [def('GPTBot', 'critical')];
     const results = [

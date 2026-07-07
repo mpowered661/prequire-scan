@@ -132,37 +132,17 @@ export async function checkRobotsTxt(
   let fetchedContent: string | null = null;
 
   if (robotsContent === null) {
-    try {
-      const base = new URL(siteUrl);
-      const robotsUrl = `${base.protocol}//${base.host}/robots.txt`;
-      const res = await fetch(robotsUrl, {
-        signal: AbortSignal.timeout(10000),
-        headers: { 'User-Agent': 'Prequire-AEO-Check/1.0' },
-      });
-
-      if (res.status === 404) {
-        return {
-          result: {
-            status: 'no_robots_txt',
-            matched_rule: null,
-            details: 'No robots.txt found (404)',
-          },
-          fetchedContent: null,
-        };
-      }
-
-      robotsContent = await res.text();
-      fetchedContent = robotsContent;
-    } catch {
-      return {
-        result: {
-          status: 'error',
-          matched_rule: null,
-          details: 'Failed to fetch robots.txt',
-        },
-        fetchedContent: null,
-      };
-    }
+    // The shared robots.txt fetch failed or returned an untrusted body (non-200,
+    // HTML challenge interstitial, or network error). Do not refetch here —
+    // report an error so the crawler verdict becomes 'undeterminable'.
+    return {
+      result: {
+        status: 'error',
+        matched_rule: null,
+        details: 'robots.txt could not be fetched or was not authentic robots.txt content',
+      },
+      fetchedContent: null,
+    };
   }
 
   const parsed = parseRobotsTxt(robotsContent);

@@ -32,9 +32,12 @@ async function checkLlmsTxt(url: string): Promise<LlmsTxt> {
   return { present: false, url: null };
 }
 
-// Fetches robots.txt once and returns the raw content.
-// Returns '' on 404 or error so checkRobotsTxt treats the site as permissive.
-async function fetchRobotsTxtContent(url: string): Promise<string> {
+// Fetches robots.txt once. Returns the raw content on a clean 200, '' on 404
+// (no robots.txt = permissive, per RFC 9309), and null when the response cannot
+// be trusted as robots.txt — non-200, an HTML body (challenge interstitial or
+// error page), or a network failure. null makes every robots verdict 'error',
+// which surfaces as 'undeterminable' rather than a false 'allowed'.
+async function fetchRobotsTxtContent(url: string): Promise<string | null> {
   try {
     const base = new URL(url);
     const robotsUrl = `${base.protocol}//${base.host}/robots.txt`;
@@ -42,9 +45,14 @@ async function fetchRobotsTxtContent(url: string): Promise<string> {
       signal: AbortSignal.timeout(10000),
       headers: { 'User-Agent': 'Prequire-AEO-Check/1.0' },
     });
-    return res.ok ? await res.text() : '';
+    if (res.status === 404) return '';
+    if (res.status !== 200) return null;
+    const text = await res.text();
+    // Authenticity guard: an HTML body is an interstitial, not robots.txt
+    if (/<html|<!doctype/i.test(text.slice(0, 500))) return null;
+    return text;
   } catch {
-    return '';
+    return null;
   }
 }
 
@@ -62,10 +70,10 @@ function buildHttpResponse(
   } else if (jsChallengeDetected) {
     // Challenge pages can arrive with 200, 403, or 503
     status = 'challenged';
-  } else if (rawFetch.status_code === 403 || rawFetch.status_code === 429) {
-    status = 'blocked';
   } else if (rawFetch.status_code >= 400) {
-    status = 'blocked';
+    // 403/429/other 4xx: a refusal to this UA simulation — not proof the real,
+    // IP-verified crawler is blocked. Verdict becomes 'undeterminable'.
+    status = 'refused';
   } else {
     status = 'ok';
   }
@@ -92,11 +100,37 @@ function determineOverallStatus(tests: CrawlerTests): {
     };
   }
 
-  if (tests.http_response.status === 'blocked') {
+  if (tests.http_response.status === 'refused') {
+    const waf = tests.http_response.waf_detected;
     return {
-      overall_status: 'blocked',
-      blocker_layer: tests.http_response.waf_detected ? 'waf' : 'server_error',
-      blocker_detail: `HTTP ${tests.http_response.status_code}${tests.http_response.waf_detected ? ` — ${tests.http_response.waf_detected}` : ''}`,
+      overall_status: 'undeterminable',
+      blocker_layer: waf ? 'waf' : 'unknown',
+      blocker_detail: `HTTP ${tests.http_response.status_code} refusal — undeterminable via UA simulation${
+        waf
+          ? ` (consistent with ${waf} filtering)`
+          : ' (cannot distinguish a real crawler block from anti-impersonation filtering)'
+      }`,
+    };
+  }
+
+  // Challenges are checked before meta tags: the meta tags of a challenge page
+  // belong to the challenge interstitial, not to the site.
+  if (tests.http_response.status === 'challenged') {
+    const waf = tests.http_response.waf_detected;
+    return {
+      overall_status: 'undeterminable',
+      blocker_layer: waf ? 'waf' : 'cdn',
+      blocker_detail: `Browser challenge — undeterminable via UA simulation${
+        waf ? ` (consistent with a ${waf} challenge)` : ''
+      }`,
+    };
+  }
+
+  if (tests.content_delivery.status === 'js_challenge') {
+    return {
+      overall_status: 'undeterminable',
+      blocker_layer: 'cdn',
+      blocker_detail: `JavaScript challenge in page body (${tests.content_delivery.challenge_indicators.slice(0, 2).join(', ')}) — undeterminable via UA simulation`,
     };
   }
 
@@ -108,14 +142,8 @@ function determineOverallStatus(tests: CrawlerTests): {
     };
   }
 
-  if (tests.content_delivery.status === 'empty') {
-    return {
-      overall_status: 'blocked',
-      blocker_layer: 'server_error',
-      blocker_detail: 'Empty response body',
-    };
-  }
-
+  // Transport failures are checked before the empty-body check: a failed fetch
+  // also has an empty body, but "Connection error or timeout" is the truthful detail.
   if (tests.http_response.status === 'error') {
     return {
       overall_status: 'blocked',
@@ -124,19 +152,21 @@ function determineOverallStatus(tests: CrawlerTests): {
     };
   }
 
-  if (tests.http_response.status === 'challenged') {
+  if (tests.content_delivery.status === 'empty') {
     return {
-      overall_status: 'partial',
-      blocker_layer: tests.http_response.waf_detected ? 'waf' : 'cdn',
-      blocker_detail: `Browser challenge from ${tests.http_response.waf_detected ?? 'CDN/WAF'}`,
+      overall_status: 'blocked',
+      blocker_layer: 'server_error',
+      blocker_detail: 'Empty response body',
     };
   }
 
-  if (tests.content_delivery.status === 'js_challenge') {
+  // robots.txt unreadable or inauthentic: permission cannot be verified, so no
+  // stronger claim than 'undeterminable' is defensible for this crawler.
+  if (tests.robots_txt.status === 'error') {
     return {
-      overall_status: 'partial',
-      blocker_layer: 'cdn',
-      blocker_detail: `JavaScript challenge in page body (${tests.content_delivery.challenge_indicators.slice(0, 2).join(', ')})`,
+      overall_status: 'undeterminable',
+      blocker_layer: 'unknown',
+      blocker_detail: 'robots.txt could not be verified — permission status undeterminable',
     };
   }
 
@@ -199,7 +229,7 @@ export async function buildReport(
   const { crawler_fetches, browser_fetch } = httpResults;
 
   // Per-crawler analysis runs in parallel across all bots
-  const crawlerResults: CrawlerResult[] = await Promise.all(
+  const fetchedResults: CrawlerResult[] = await Promise.all(
     crawler_fetches.map(async (rawFetch) => {
       const crawler = activeCrawlers.find((c) => c.name === rawFetch.crawler_name)!;
       const { result: robotsTxt } = await checkRobotsTxt(url, rawFetch.crawler_name, robotsContent);
@@ -229,6 +259,48 @@ export async function buildReport(
     }),
   );
 
+  // robots_only crawlers (Google-Extended) are never fetched — their verdict comes
+  // from the robots.txt token check alone; every other test is not applicable.
+  const robotsOnlyResults: CrawlerResult[] = await Promise.all(
+    activeCrawlers
+      .filter((c) => c.check_type === 'robots_only')
+      .map(async (crawler) => {
+        const { result: robotsTxt } = await checkRobotsTxt(url, crawler.name, robotsContent);
+        const tests: CrawlerTests = {
+          robots_txt: robotsTxt,
+          http_response: { status_code: 0, response_time_ms: 0, server: null, waf_detected: null, status: 'not_applicable' },
+          content_delivery: { html_bytes: 0, text_bytes: 0, text_html_ratio: 0, js_challenge_detected: false, challenge_indicators: [], content_appears_rendered: false, status: 'not_applicable' },
+          meta_tags: { robots_directive: null, ai_blocking_directives: [], canonical: null, status: 'not_applicable' },
+          cloaking: { divergence_pct: 0, status: 'not_applicable' },
+        };
+        if (robotsTxt.status === 'disallowed') {
+          return {
+            crawler_name: crawler.name, user_agent: crawler.user_agent, tests,
+            overall_status: 'blocked' as const, blocker_layer: 'robots_txt' as const,
+            blocker_detail: robotsTxt.matched_rule ?? 'Disallowed by robots.txt',
+          };
+        }
+        if (robotsTxt.status === 'error') {
+          return {
+            crawler_name: crawler.name, user_agent: crawler.user_agent, tests,
+            overall_status: 'undeterminable' as const, blocker_layer: 'unknown' as const,
+            blocker_detail: 'robots.txt could not be verified — token status undeterminable',
+          };
+        }
+        return {
+          crawler_name: crawler.name, user_agent: crawler.user_agent, tests,
+          overall_status: 'accessible' as const, blocker_layer: 'none' as const,
+          blocker_detail: 'Permitted by robots.txt (directive token — robots-only check)',
+        };
+      }),
+  );
+
+  // Present results in the canonical crawler order
+  const orderIndex = new Map(activeCrawlers.map((c, i) => [c.name, i]));
+  const crawlerResults: CrawlerResult[] = [...fetchedResults, ...robotsOnlyResults].sort(
+    (a, b) => (orderIndex.get(a.crawler_name) ?? 99) - (orderIndex.get(b.crawler_name) ?? 99),
+  );
+
   const detectedStack = buildDetectedStack(browser_fetch.headers, browser_fetch.body);
   const score = computeScore(crawlerResults, activeCrawlers);
   const fixes = generateFixes(crawlerResults, detectedStack);
@@ -238,6 +310,7 @@ export async function buildReport(
     accessible: crawlerResults.filter((r) => r.overall_status === 'accessible').length,
     partial: crawlerResults.filter((r) => r.overall_status === 'partial').length,
     blocked: crawlerResults.filter((r) => r.overall_status === 'blocked').length,
+    undeterminable: crawlerResults.filter((r) => r.overall_status === 'undeterminable').length,
     primary_blocker: getPrimaryBlocker(crawlerResults),
   };
 

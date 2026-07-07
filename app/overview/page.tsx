@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { ScanResult } from '@/lib/scanPrompt';
 import type { AeoReadinessReport } from '@/lib/aeo-readiness/types';
+import { scoreSurface } from '@/lib/aeo-readiness/score-surface';
 
 const PASSTHROUGH = ['email', 'name', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const;
 
@@ -268,22 +269,50 @@ function OverviewPageInner() {
 
             {vis.status === 'done' && (
               <div className="space-y-4">
-                <div className="flex items-end gap-3">
-                  <span className={`text-4xl font-bold font-mono ${scoreColor(vis.score)}`}>
-                    {vis.score}
-                  </span>
-                  <span className="text-slate-500 text-sm pb-1">/ 100</span>
-                  <span className={`text-sm pb-1 ${scoreColor(vis.score)}`}>
-                    {scoreLabel(vis.score)}
-                  </span>
-                </div>
+                {(() => {
+                  const surface = scoreSurface(vis.report.summary);
+                  if (surface.state === 'low_coverage') {
+                    return (
+                      <div>
+                        <div className="flex items-end gap-3">
+                          <span className="text-4xl font-bold font-mono text-slate-400">—</span>
+                          <span className="text-slate-400 text-sm pb-1">Undeterminable</span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">
+                          {surface.undeterminable} of {surface.total} crawlers could not be verified by UA simulation
+                          {surface.determinable > 0 &&
+                            ` — determinable signals: ${vis.score}/100 (${surface.determinable} of ${surface.total})`}
+                        </p>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div>
+                      <div className="flex items-end gap-3">
+                        <span className={`text-4xl font-bold font-mono ${scoreColor(vis.score)}`}>
+                          {vis.score}
+                        </span>
+                        <span className="text-slate-500 text-sm pb-1">/ 100</span>
+                        <span className={`text-sm pb-1 ${scoreColor(vis.score)}`}>
+                          {scoreLabel(vis.score)}
+                        </span>
+                      </div>
+                      {surface.state === 'reduced' && (
+                        <p className="text-xs font-semibold text-slate-400 mt-1">
+                          {surface.determinable} of {surface.total} signals · {surface.undeterminable} undeterminable
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Summary row */}
-                <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
                   {[
                     { label: 'Accessible', val: vis.report.summary.accessible, color: 'text-green-400' },
                     { label: 'Partial', val: vis.report.summary.partial, color: 'text-yellow-400' },
                     { label: 'Blocked', val: vis.report.summary.blocked, color: 'text-red-400' },
+                    { label: 'Undeterminable', val: vis.report.summary.undeterminable ?? 0, color: 'text-slate-400' },
                   ].map(({ label, val, color }) => (
                     <div key={label} className="bg-slate-800/50 rounded-lg py-2">
                       <div className={`text-xl font-bold font-mono ${color}`}>{val}</div>

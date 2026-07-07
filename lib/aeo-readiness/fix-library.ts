@@ -40,21 +40,24 @@ export function generateFixes(results: CrawlerResult[], stack: DetectedStack): F
     });
   }
 
-  // 2. Hard HTTP blocks (403 / 429) — robots.txt is not the primary cause
-  const httpBlocked = results.filter(
+  // 2. HTTP refusals (403 / 429 / other 4xx) — undeterminable via UA simulation.
+  // The refusal is observed; whether real, IP-verified crawlers are also refused
+  // cannot be determined from this check, so the copy stays tentative.
+  const httpRefused = results.filter(
     (r) =>
-      r.tests.http_response.status === 'blocked' &&
+      r.tests.http_response.status === 'refused' &&
       r.tests.robots_txt.status !== 'disallowed',
   );
-  if (httpBlocked.length > 0) {
-    const affected = crawlerNames(httpBlocked);
-    const statusCode = httpBlocked[0].tests.http_response.status_code;
-    const waf = stack.waf ?? httpBlocked[0].tests.http_response.waf_detected ?? 'your firewall';
+  if (httpRefused.length > 0) {
+    const affected = crawlerNames(httpRefused);
+    const statusCode = httpRefused[0].tests.http_response.status_code;
+    const waf = stack.waf ?? httpRefused[0].tests.http_response.waf_detected;
+    const wafPhrase = waf ? `Traffic filtering consistent with ${waf}` : 'Traffic filtering on your site';
     fixes.push({
-      priority: topPriority(affected),
-      issue: `HTTP ${statusCode} response blocking AI crawlers`,
+      priority: hasCritical(affected) ? 'high' : 'medium',
+      issue: `HTTP ${statusCode} refusals to AI crawler user-agents (undeterminable)`,
       affected_crawlers: affected,
-      fix_summary: `${waf} is returning HTTP ${statusCode} to ${affected.length} AI crawler${affected.length > 1 ? 's' : ''}. This is a hard block — these bots receive no content from your site.`,
+      fix_summary: `${wafPhrase} returned HTTP ${statusCode} to ${affected.length} AI crawler user-agent simulation${affected.length > 1 ? 's' : ''}. This check cannot present verified crawler IP addresses, so it cannot determine whether the real crawlers are blocked — sites that verify crawler IPs may be filtering only impersonators. Check your firewall's security events for the real crawlers; if they are being refused, the steps below allowlist them.`,
       fix_steps:
         stack.waf === 'Cloudflare'
           ? [
@@ -81,7 +84,7 @@ export function generateFixes(results: CrawlerResult[], stack: DetectedStack): F
               'Re-run this check to confirm bots are no longer blocked',
             ]
           : [
-              `Log in to your ${waf} control panel`,
+              `Log in to your ${waf ?? 'firewall'} control panel`,
               'Find the IP allowlist, User-Agent allowlist, or bot management settings',
               `Add an exception for each blocked crawler's User-Agent string (listed above under "Affects")`,
               'Consult your WAF documentation for the correct allowlist syntax',
@@ -91,22 +94,24 @@ export function generateFixes(results: CrawlerResult[], stack: DetectedStack): F
     });
   }
 
-  // 3. JavaScript browser challenge
+  // 3. JavaScript browser challenge — also undeterminable for real crawlers:
+  // providers with verified-bots programs may exempt the real crawler from the
+  // challenge that our simulation received.
   const jsChallenged = results.filter(
     (r) =>
       (r.tests.http_response.status === 'challenged' ||
         r.tests.content_delivery.js_challenge_detected) &&
-      r.tests.http_response.status !== 'blocked' &&
+      r.tests.http_response.status !== 'refused' &&
       r.tests.robots_txt.status !== 'disallowed',
   );
   if (jsChallenged.length > 0) {
     const affected = crawlerNames(jsChallenged);
     fixes.push({
-      priority: topPriority(affected, 'high'),
-      issue: 'JavaScript browser challenge served to AI crawlers',
+      priority: hasCritical(affected) ? 'high' : 'medium',
+      issue: 'Browser challenge served to AI crawler user-agents (undeterminable)',
       affected_crawlers: affected,
       fix_summary:
-        'AI crawlers are receiving a browser-verification challenge page. These bots cannot execute JavaScript and will never pass the challenge — your content is invisible to them.',
+        'AI crawler user-agent simulations received a browser-verification challenge page. Whether real, IP-verified crawlers receive the same challenge is undeterminable from this check. AI crawlers cannot execute JavaScript — if your bot protection does not exempt verified crawlers, they never pass the challenge. Confirm your provider\'s verified-bots setting is enabled.',
       fix_steps:
         stack.waf === 'Cloudflare' || stack.cdn === 'Cloudflare'
           ? [
@@ -132,7 +137,10 @@ export function generateFixes(results: CrawlerResult[], stack: DetectedStack): F
     (r) =>
       r.tests.meta_tags.status === 'blocked_via_meta' &&
       r.tests.robots_txt.status !== 'disallowed' &&
-      r.tests.http_response.status !== 'blocked',
+      // Only trust meta tags from a normally-served page: the meta tags of a
+      // challenge or refusal page belong to the interstitial, not the site.
+      r.tests.http_response.status === 'ok' &&
+      !r.tests.content_delivery.js_challenge_detected,
   );
   if (metaBlocked.length > 0) {
     const affected = crawlerNames(metaBlocked);
@@ -210,7 +218,12 @@ export function generateFixes(results: CrawlerResult[], stack: DetectedStack): F
 
   // 6. Potential cloaking
   const cloakingPartial = results.filter(
-    (r) => r.tests.cloaking.status === 'potential_cloaking',
+    (r) =>
+      r.tests.cloaking.status === 'potential_cloaking' &&
+      // A challenge or refusal body always diverges from the browser view —
+      // that is the interstitial, not cloaking.
+      r.tests.http_response.status === 'ok' &&
+      !r.tests.content_delivery.js_challenge_detected,
   );
   if (cloakingPartial.length > 0) {
     const affected = crawlerNames(cloakingPartial);

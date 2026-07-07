@@ -1,11 +1,15 @@
 export type CrawlerTier = 'critical' | 'important' | 'other' | 'seo';
 
 export type RobotsTxtStatus = 'allowed' | 'disallowed' | 'no_robots_txt' | 'error';
-export type HttpResponseStatus = 'ok' | 'blocked' | 'challenged' | 'error';
-export type ContentDeliveryStatus = 'ok' | 'js_challenge' | 'client_side_rendered' | 'empty';
-export type MetaTagsStatus = 'ok' | 'blocked_via_meta' | 'missing';
-export type CloakingStatus = 'ok' | 'potential_cloaking' | 'not_tested';
-export type OverallStatus = 'accessible' | 'partial' | 'blocked';
+// 'refused' = HTTP-layer refusal (403/429/other 4xx). A UA simulation cannot present
+// verified crawler IPs, so a refusal never proves the real crawler is blocked.
+export type HttpResponseStatus = 'ok' | 'refused' | 'challenged' | 'error' | 'not_applicable';
+export type ContentDeliveryStatus = 'ok' | 'js_challenge' | 'client_side_rendered' | 'empty' | 'not_applicable';
+export type MetaTagsStatus = 'ok' | 'blocked_via_meta' | 'missing' | 'not_applicable';
+export type CloakingStatus = 'ok' | 'potential_cloaking' | 'not_tested' | 'not_applicable';
+// 'blocked' is reserved for declarative blocks (robots.txt disallow, meta robots).
+// HTTP-layer refusals and challenges are 'undeterminable via UA simulation'.
+export type OverallStatus = 'accessible' | 'partial' | 'blocked' | 'undeterminable';
 export type BlockerLayer =
   | 'robots_txt'
   | 'waf'
@@ -13,6 +17,7 @@ export type BlockerLayer =
   | 'meta_tags'
   | 'client_render'
   | 'server_error'
+  | 'unknown'
   | 'none';
 export type FixPriority = 'critical' | 'high' | 'medium' | 'low';
 
@@ -97,6 +102,11 @@ export interface ReportSummary {
   accessible: number;
   partial: number;
   blocked: number;
+  // Verdicts a UA simulation cannot make: HTTP refusals and browser challenges.
+  // Excluded from the score denominator. Optional because reports stored before
+  // 2026-07 predate the concept — legacy reports must render with no basis line
+  // rather than asserting a coverage they never measured.
+  undeterminable?: number;
   primary_blocker: string | null;
 }
 
@@ -115,6 +125,9 @@ export interface CrawlerDefinition {
   name: string;
   user_agent: string;
   tier: CrawlerTier;
+  // 'robots_only': a robots.txt directive token, not a fetchable bot (Google-Extended).
+  // Never fetched over HTTP; verdict comes from the robots.txt check alone.
+  check_type?: 'http' | 'robots_only';
 }
 
 export interface RawCrawlerFetch {

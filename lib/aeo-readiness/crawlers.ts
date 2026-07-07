@@ -49,10 +49,13 @@ export const CRAWLERS: CrawlerDefinition[] = [
     tier: 'other',
   },
   {
+    // Google-Extended is a robots.txt directive token, not a fetching crawler.
+    // It must never be probed over HTTP (previously it was fetched with a
+    // Googlebot UA, which sites treat as impersonation).
     name: 'Google-Extended',
-    user_agent:
-      'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+    user_agent: 'robots.txt token (not fetched)',
     tier: 'critical',
+    check_type: 'robots_only',
   },
   {
     name: 'Applebot-Extended',

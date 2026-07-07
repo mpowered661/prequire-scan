@@ -87,7 +87,10 @@ export async function runHttpTests(
   options: HttpTesterOptions = {},
 ): Promise<{ crawler_fetches: RawCrawlerFetch[]; browser_fetch: RawCrawlerFetch }> {
   const { include_seo_bots = false } = options;
-  const crawlers = getActiveCrawlers(include_seo_bots);
+  // robots_only entries (Google-Extended) are never fetched over HTTP
+  const crawlers = getActiveCrawlers(include_seo_bots).filter(
+    (c) => c.check_type !== 'robots_only',
+  );
 
   // Append Prequire identification suffix to every bot UA
   const crawlerFetchPromises = crawlers.map((c) =>

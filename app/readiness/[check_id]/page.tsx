@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { getReadinessCheck } from '@/lib/supabase/readinessChecks';
 import { CRAWLERS } from '@/lib/aeo-readiness/crawlers';
 import type { FixPriority, OverallStatus, CrawlerTier } from '@/lib/aeo-readiness/types';
+import { scoreSurface } from '@/lib/aeo-readiness/score-surface';
 
 interface Props {
   params: Promise<{ check_id: string }>;
@@ -19,6 +20,7 @@ const STATUS_COLOR: Record<OverallStatus, string> = {
   accessible: 'text-green-400',
   partial: 'text-amber-400',
   blocked: 'text-red-400',
+  undeterminable: 'text-slate-400',
 };
 
 const PRIORITY_CARD: Record<FixPriority, string> = {
@@ -51,21 +53,40 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
   const { label } = scoreStyle(row.score);
   const hostname = (() => { try { return new URL(row.url).hostname; } catch { return row.url; } })();
+  const surface = scoreSurface(row.report.summary);
+
+  // Mirrors the on-page score surface: a score never appears without its basis,
+  // and a low-coverage report does not headline a score at all.
+  const headline =
+    surface.state === 'low_coverage'
+      ? `AI Crawler Accessibility: ${hostname} — undeterminable for ${surface.undeterminable} of ${surface.total} crawlers`
+      : `AI Crawler Accessibility: ${hostname} scores ${row.score}/100`;
+  const description =
+    surface.state === 'low_coverage'
+      ? `${surface.undeterminable} of ${surface.total} AI crawlers could not be verified by UA simulation. Determinable signals: ${row.score}/100 (${surface.determinable} of ${surface.total}).`
+      : surface.state === 'reduced'
+      ? `${hostname} scored ${row.score}/100 on ${surface.determinable} of ${surface.total} determinable signals (${surface.undeterminable} undeterminable). ${label}.`
+      : surface.state === 'clean'
+      ? `${hostname} scored ${row.score}/100 for AI crawler accessibility — all ${surface.total} crawlers determinable. ${label}.`
+      : `${hostname} scored ${row.score}/100 for AI crawler accessibility. ${label}. ${row.report.summary.accessible}/${row.report.summary.total_crawlers_tested} AI crawlers have full access.`;
 
   return {
     title: `Crawler Accessibility: ${hostname} — Prequire`,
-    description: `${hostname} scored ${row.score}/100 for AI crawler accessibility. ${label}. ${row.report.summary.accessible}/${row.report.summary.total_crawlers_tested} AI crawlers have full access.`,
+    description,
     openGraph: {
-      title: `AI Crawler Accessibility: ${hostname} scores ${row.score}/100`,
-      description: `${label}. ${row.report.summary.blocked} crawlers blocked, ${row.report.summary.partial} partial. See the full breakdown and fix recommendations.`,
+      title: headline,
+      description:
+        surface.state === 'low_coverage'
+          ? description
+          : `${label}. ${row.report.summary.blocked} crawlers blocked, ${row.report.summary.partial} partial. See the full breakdown and fix recommendations.`,
       url: `https://scan.prequire.ai/readiness/${check_id}`,
       siteName: 'Prequire',
       type: 'website',
     },
     twitter: {
       card: 'summary',
-      title: `AI Crawler Accessibility: ${hostname} scores ${row.score}/100`,
-      description: `${label}. See the full breakdown and fixes.`,
+      title: headline,
+      description: surface.state === 'low_coverage' ? description : `${label}. See the full breakdown and fixes.`,
     },
   };
 }
@@ -77,6 +98,7 @@ export default async function ReadinessPage({ params }: Props) {
 
   const { report, score } = row;
   const { label, textClass, borderClass } = scoreStyle(score);
+  const surface = scoreSurface(report.summary);
   const hostname = (() => { try { return new URL(row.url).hostname; } catch { return row.url; } })();
   const testedAt = new Date(report.tested_at).toLocaleDateString('en-US', {
     year: 'numeric', month: 'long', day: 'numeric',
@@ -100,14 +122,47 @@ export default async function ReadinessPage({ params }: Props) {
           </a>
         </div>
 
-        {/* Hero */}
+        {/* Hero — the score never renders without its basis.
+            legacy: score + label only (a pre-2026-07 scan measured no coverage — assert none)
+            clean/reduced: score headlines with its basis co-equal
+            low_coverage: the score is demoted; "Undeterminable" headlines */}
         <div className="bg-[#0d1525] border border-slate-800 rounded-2xl p-8 mb-6 flex flex-col sm:flex-row items-center gap-6">
-          <div className={`w-24 h-24 rounded-full border-4 ${borderClass} flex items-center justify-center flex-shrink-0`}>
-            <span className={`text-3xl font-bold ${textClass}`}>{score}</span>
-          </div>
+          {surface.state === 'low_coverage' ? (
+            <div className="w-24 h-24 rounded-full border-4 border-slate-600 flex items-center justify-center flex-shrink-0">
+              <span className="text-xl font-bold text-slate-400">{surface.undeterminable}/{surface.total}</span>
+            </div>
+          ) : (
+            <div className={`w-24 h-24 rounded-full border-4 ${surface.state === 'reduced' ? 'border-slate-500' : borderClass} flex items-center justify-center flex-shrink-0`}>
+              <span className={`text-3xl font-bold ${textClass}`}>{score}</span>
+            </div>
+          )}
           <div className="flex-1 text-center sm:text-left">
             <p className="text-xs font-mono text-slate-500 mb-1 truncate max-w-xs">{hostname}</p>
-            <h1 className="text-xl font-bold mb-1">{label} — AI Crawler Accessibility</h1>
+            {surface.state === 'low_coverage' ? (
+              <>
+                <h1 className="text-xl font-bold mb-1">Undeterminable — AI Crawler Accessibility</h1>
+                <p className="text-xl font-bold text-slate-400 mb-1">
+                  {surface.undeterminable} of {surface.total} crawlers could not be verified by UA simulation
+                </p>
+                <p className="text-slate-400 text-sm">
+                  {surface.determinable === 0
+                    ? `0 of ${surface.total} determinable — no score`
+                    : `Determinable signals: ${score} · ${surface.determinable} of ${surface.total}`}
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-xl font-bold mb-1">{label} — AI Crawler Accessibility</h1>
+                {surface.state === 'reduced' && (
+                  <p className="text-xl font-bold text-slate-300 mb-1">
+                    {surface.determinable} of {surface.total} signals · {surface.undeterminable} undeterminable
+                  </p>
+                )}
+                {surface.state === 'clean' && (
+                  <p className="text-slate-400 text-sm">All {surface.total} crawlers determinable</p>
+                )}
+              </>
+            )}
             <p className="text-slate-400 text-sm">
               {report.summary.accessible} of {report.summary.total_crawlers_tested} AI crawlers have full access
             </p>
@@ -120,8 +175,9 @@ export default async function ReadinessPage({ params }: Props) {
           </div>
         </div>
 
-        {/* Summary counts */}
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        {/* Summary counts — legacy reports keep their original three tiles;
+            they measured no undeterminable count, so none is asserted */}
+        <div className={`grid ${surface.state === 'legacy' ? 'grid-cols-3' : 'grid-cols-2 sm:grid-cols-4'} gap-4 mb-6`}>
           <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4 text-center">
             <div className="text-2xl font-bold text-green-400">{report.summary.accessible}</div>
             <div className="text-xs text-slate-400 mt-1">Accessible</div>
@@ -134,7 +190,21 @@ export default async function ReadinessPage({ params }: Props) {
             <div className="text-2xl font-bold text-red-400">{report.summary.blocked}</div>
             <div className="text-xs text-slate-400 mt-1">Blocked</div>
           </div>
+          {surface.state !== 'legacy' && (
+            <div className="bg-slate-500/10 border border-slate-500/20 rounded-xl p-4 text-center">
+              <div className="text-2xl font-bold text-slate-400">{report.summary.undeterminable}</div>
+              <div className="text-xs text-slate-400 mt-1">Undeterminable</div>
+            </div>
+          )}
         </div>
+
+        {surface.state !== 'legacy' && (report.summary.undeterminable ?? 0) > 0 && (
+          <p className="text-xs text-slate-500 mb-6">
+            Undeterminable: this check simulates crawler user-agents but cannot present
+            verified crawler IP addresses. Sites that verify crawler IPs may treat the
+            real crawlers differently than these simulations.
+          </p>
+        )}
 
         {/* Stack + llms.txt */}
         {(stackBadges.length > 0 || true) && (
