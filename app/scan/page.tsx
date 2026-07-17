@@ -100,7 +100,13 @@ function ScanPageInner() {
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: urlStr.trim(), ...utmParams }),
+        // email (when the landing passed one) persists with the scan so account
+        // signup can import "your scan" automatically (Sprint 2 first-run).
+        body: JSON.stringify({
+          url: urlStr.trim(),
+          ...(pubEmail ? { email: pubEmail } : {}),
+          ...utmParams,
+        }),
       });
 
       if (!res.body) {
@@ -147,12 +153,20 @@ function ScanPageInner() {
               () => resultsRef.current?.scrollIntoView({ behavior: 'smooth' }),
               300
             );
-            // Queue audit email via GHL if email was passed from landing page
+            // Queue the audit email. scan_id ties the email to THIS completed
+            // scan so the emailed report is the exact result shown on screen
+            // (Sprint 1 T4) — without it the cron re-scans with a second engine
+            // and the emailed score can contradict the on-screen one.
             if (pubEmail) {
               fetch('https://app.prequire.ai/api/audit/public-audit.php', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ url: payload.url, email: pubEmail, name: pubName }),
+                body:    JSON.stringify({
+                  url: payload.url,
+                  email: pubEmail,
+                  name: pubName,
+                  scan_id: payload.scan_id ?? null,
+                }),
               }).catch(() => {});
             }
             return;

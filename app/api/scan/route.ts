@@ -128,11 +128,15 @@ export async function POST(req: NextRequest) {
         // Persist full result and get scan_id (non-blocking — missing table won't kill scan)
         let scanId: string | null = null;
         try {
+          // email persists for public scans too (Sprint 2 A): it is the join key
+          // that lets first-run project import find "the scan this account ran".
+          // scan_results is deny-all RLS (service-role only), so this adds no
+          // client-readable PII surface.
           scanId = await saveScanResult({
             url: normalizedUrl,
             overall_score: result.overallScore,
             result_json: result,
-            email: isInternal ? (email ?? null) : null,
+            email: email ?? null,
             source: isInternal ? 'quinn' : 'public',
             ghl_contact_id: isInternal ? (ghl_contact_id ?? null) : null,
           });
