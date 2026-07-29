@@ -144,16 +144,25 @@ export async function POST(req: NextRequest) {
           console.error('[scan] saveScanResult failed (non-fatal):', persistErr);
         }
 
-        // Log lead to scan_leads (existing table — non-blocking)
-        logScanLead({
-          url: normalizedUrl,
-          overall_score: result.overallScore,
-          utm_source,
-          utm_medium,
-          utm_campaign,
-          utm_content,
-          utm_term,
-        });
+        // Log lead to scan_leads. Strictly non-fatal: a failure here must never
+        // affect the scan response. Awaited so the outcome is observable at the
+        // call site; logScanLead does not throw, and the catch is a backstop.
+        try {
+          const leadResult = await logScanLead({
+            url: normalizedUrl,
+            overall_score: result.overallScore,
+            utm_source,
+            utm_medium,
+            utm_campaign,
+            utm_content,
+            utm_term,
+          });
+          if (!leadResult.ok) {
+            console.error('[scan] lead logging failed (non-fatal), code:', leadResult.code);
+          }
+        } catch {
+          console.error('[scan] lead logging threw (non-fatal)');
+        }
 
         // Stage 4 — complete
         controller.enqueue(encode({
