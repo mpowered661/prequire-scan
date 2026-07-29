@@ -27,13 +27,14 @@ export async function logScanLead(data: ScanLeadData): Promise<void> {
     created_at: new Date().toISOString(),
   };
 
-  console.log('[scanLeads] inserting:', JSON.stringify(payload, null, 2));
-
   const { error } = await supabase.from('scan_leads').insert(payload);
 
-  console.log('[scanLeads] insert result — error:', error ? JSON.stringify(error) : null);
-
+  // Log operation outcome only. The payload carries the scanned URL and UTM
+  // attribution, and Postgres error messages echo offending row values, so
+  // neither is safe to emit to function logs.
   if (error) {
-    console.error('[scanLeads] Supabase insert error:', error.message);
+    console.error('[scanLeads] insert failed — records: 1, code:', error.code ?? 'unknown');
+  } else {
+    console.log('[scanLeads] insert ok — records: 1');
   }
 }
