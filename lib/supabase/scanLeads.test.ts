@@ -99,3 +99,50 @@ describe('logScanLead — logging never leaks payload values', () => {
     expect(insertMock.mock.calls[0][0]).toMatchObject(SENSITIVE);
   });
 });
+
+describe('logScanLead — structured result', () => {
+  it('returns ok on success', async () => {
+    insertMock.mockResolvedValue({ error: null });
+
+    await expect(logScanLead({ overall_score: 42, ...SENSITIVE })).resolves.toEqual({
+      ok: true,
+    });
+  });
+
+  it('returns the error code on a Postgres error', async () => {
+    insertMock.mockResolvedValue({
+      error: { code: '23505', message: `Key (url)=(${SENSITIVE.url}) already exists.` },
+    });
+
+    await expect(logScanLead({ overall_score: 42, ...SENSITIVE })).resolves.toEqual({
+      ok: false,
+      code: '23505',
+    });
+  });
+
+  it('returns code PGRST204 when the column is missing (the production failure)', async () => {
+    insertMock.mockResolvedValue({
+      error: {
+        code: 'PGRST204',
+        message: "Could not find the 'utm_content' column of 'scan_leads' in the schema cache",
+      },
+    });
+
+    await expect(logScanLead({ overall_score: 42, ...SENSITIVE })).resolves.toEqual({
+      ok: false,
+      code: 'PGRST204',
+    });
+  });
+
+  it('does not throw when the insert rejects, and reports transport', async () => {
+    insertMock.mockRejectedValue(new Error(`socket hang up while POSTing ${SENSITIVE.url}`));
+
+    await expect(logScanLead({ overall_score: 42, ...SENSITIVE })).resolves.toEqual({
+      ok: false,
+      code: 'transport',
+    });
+
+    // The rejection message embedded a URL; it must not reach the logs.
+    expect(consoleOutput()).not.toContain(SENSITIVE.url);
+  });
+});
