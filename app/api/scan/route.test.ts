@@ -84,6 +84,21 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('POST /api/scan — result is never gated on email', () => {
+  it('completes a scan with no email anywhere in the request', async () => {
+    logScanLeadMock.mockResolvedValue({ ok: true });
+
+    const events = await readEvents(await POST(makeRequest({ url: 'example.com' })));
+    const complete = events.find((e) => e.stage === 'complete');
+
+    expect(complete).toBeDefined();
+    // Full result delivered to an anonymous visitor — no email required.
+    const result = (complete!.data as { result: Record<string, unknown> }).result;
+    expect(result.categories).toEqual(SCAN_RESULT.categories);
+    expect(saveScanResultMock).toHaveBeenCalledWith(expect.objectContaining({ email: null }));
+  });
+});
+
 describe('POST /api/scan — lead logging is non-fatal', () => {
   it('completes the scan when lead logging succeeds', async () => {
     logScanLeadMock.mockResolvedValue({ ok: true });

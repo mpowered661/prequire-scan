@@ -5,6 +5,9 @@ import { useSearchParams } from 'next/navigation';
 import type { ScanResult } from '@/lib/scanPrompt';
 import type { AeoReadinessReport } from '@/lib/aeo-readiness/types';
 import { scoreSurface } from '@/lib/aeo-readiness/score-surface';
+import { EmailReportForm } from '@/components/EmailReportForm';
+import { scoreBand } from '@/lib/scanUtils';
+import { track } from '@/lib/track';
 
 const PASSTHROUGH = ['email', 'name', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const;
 
@@ -134,6 +137,11 @@ function OverviewPageInner() {
           }
           if (stage === 'complete') {
             const data = event.data as { result: ScanResult; url: string; scan_id: string | null };
+            track('scan_completed', {
+              surface: 'overview',
+              band: scoreBand(data.result.overallScore),
+              ...(data.scan_id ? { scan_id: data.scan_id } : {}),
+            });
             setCit({
               status: 'done',
               scanId: data.scan_id,
@@ -452,6 +460,31 @@ function OverviewPageInner() {
             <p className="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Summary</p>
             <p className="text-sm text-slate-300 leading-relaxed">{cit.result.summary}</p>
           </div>
+        )}
+
+        {/* Optional email capture — results above stay fully visible either way.
+            Visitors who arrived with an email param already have the report
+            queued by the /scan flow and don't need a second prompt. */}
+        {cit.status === 'done' && !searchParams.get('email') && (
+          <EmailReportForm
+            url={cit.url}
+            score={cit.score}
+            surface="overview"
+            meta={{
+              scan_id: cit.scanId,
+              prompt_version: cit.result.scan_meta?.prompt_version ?? null,
+              model: cit.result.scan_meta?.model ?? null,
+              registry_version:
+                vis.status === 'done' ? vis.report.registry_version ?? null : null,
+            }}
+            utm={{
+              utm_source: searchParams.get('utm_source'),
+              utm_medium: searchParams.get('utm_medium'),
+              utm_campaign: searchParams.get('utm_campaign'),
+              utm_content: searchParams.get('utm_content'),
+              utm_term: searchParams.get('utm_term'),
+            }}
+          />
         )}
 
         {/* No URL fallback */}

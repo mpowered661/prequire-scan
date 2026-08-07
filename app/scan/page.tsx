@@ -4,7 +4,9 @@ import { useState, useRef, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { ScanResult } from '@/lib/scanPrompt';
 import { ScoreGauge, CategoryCard } from '@/components/ScanDisplay';
-import { CATEGORIES, scoreLabel } from '@/lib/scanUtils';
+import { EmailReportForm } from '@/components/EmailReportForm';
+import { CATEGORIES, scoreLabel, scoreBand } from '@/lib/scanUtils';
+import { track } from '@/lib/track';
 
 // ── Streaming progress ───────────────────────────────────────
 const STAGES = [
@@ -149,6 +151,11 @@ function ScanPageInner() {
             setResult(payload.result);
             setScannedUrl(payload.url);
             if (payload.scan_id) setScanId(payload.scan_id);
+            track('scan_completed', {
+              surface: 'scan',
+              band: scoreBand(payload.result.overallScore),
+              ...(payload.scan_id ? { scan_id: payload.scan_id } : {}),
+            });
             setTimeout(
               () => resultsRef.current?.scrollIntoView({ behavior: 'smooth' }),
               300
@@ -288,6 +295,25 @@ function ScanPageInner() {
               </a>
             </div>
           </div>
+
+          {/* Optional email capture — result above is fully visible either way.
+              Landing-page visitors who already supplied an email get the report
+              queued automatically (existing flow) and never see this form. */}
+          {!pubEmail && (
+            <div className="mb-8">
+              <EmailReportForm
+                url={scannedUrl}
+                score={result.overallScore}
+                surface="scan"
+                meta={{
+                  scan_id: scanId,
+                  prompt_version: result.scan_meta?.prompt_version ?? null,
+                  model: result.scan_meta?.model ?? null,
+                }}
+                utm={utmParams}
+              />
+            </div>
+          )}
 
           {/* Category grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

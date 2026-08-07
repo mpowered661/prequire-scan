@@ -21,3 +21,11 @@ export function scoreLabel(score: number): string {
     ? 'Moderate — gaps to address'
     : 'Significant AEO gaps';
 }
+
+// Machine-readable band matching scoreLabel's thresholds — stored with captured
+// leads so a lead row is meaningful without re-deriving thresholds later.
+export type ScoreBand = 'strong' | 'moderate' | 'weak';
+
+export function scoreBand(score: number): ScoreBand {
+  return score >= 70 ? 'strong' : score >= 45 ? 'moderate' : 'weak';
+}
