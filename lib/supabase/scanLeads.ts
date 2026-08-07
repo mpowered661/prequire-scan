@@ -15,7 +15,22 @@ export interface ScanLeadData {
   utm_term?: string | null;
 }
 
-export async function logScanLead(data: ScanLeadData): Promise<void> {
+/** Outcome of a lead-logging attempt. `code` is a SQLSTATE/PostgREST code or
+ *  'transport' for a network-level failure — never a message or a row value. */
+export type LogScanLeadResult =
+  | { ok: true }
+  | { ok: false; code: string };
+
+/**
+ * Records a scan lead. Never throws: lead logging is not on the critical path
+ * for the scan response, so every failure mode is reported through the return
+ * value instead of an exception.
+ *
+ * Logging is operation state, record count, and error code only. The payload
+ * carries the scanned URL and UTM attribution, and Postgres error messages
+ * echo offending row values, so neither is safe to emit to function logs.
+ */
+export async function logScanLead(data: ScanLeadData): Promise<LogScanLeadResult> {
   const payload = {
     url: data.url,
     overall_score: data.overall_score,
@@ -27,13 +42,21 @@ export async function logScanLead(data: ScanLeadData): Promise<void> {
     created_at: new Date().toISOString(),
   };
 
-  console.log('[scanLeads] inserting:', JSON.stringify(payload, null, 2));
+  try {
+    const { error } = await supabase.from('scan_leads').insert(payload);
 
-  const { error } = await supabase.from('scan_leads').insert(payload);
+    if (error) {
+      const code = error.code ?? 'unknown';
+      console.error('[scanLeads] insert failed — records: 1, code:', code);
+      return { ok: false, code };
+    }
 
-  console.log('[scanLeads] insert result — error:', error ? JSON.stringify(error) : null);
-
-  if (error) {
-    console.error('[scanLeads] Supabase insert error:', error.message);
+    console.log('[scanLeads] insert ok — records: 1');
+    return { ok: true };
+  } catch {
+    // Network/transport failure. Swallowed deliberately — the caller decides
+    // what to do, and the scan response must not depend on this.
+    console.error('[scanLeads] insert failed — records: 1, code:', 'transport');
+    return { ok: false, code: 'transport' };
   }
 }
