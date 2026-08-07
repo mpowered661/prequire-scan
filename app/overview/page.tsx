@@ -405,7 +405,7 @@ function OverviewPageInner() {
                         contentQuality: 'Content Quality',
                         schemaMarkup: 'Schema Markup',
                         performance: 'Performance',
-                        accessibility: 'Accessibility',
+                        accessibility: 'Accessibility (HTML)',
                       };
                       return (
                         <div key={key} className="flex items-center gap-3">

@@ -8,7 +8,10 @@ export const CATEGORIES: {
   { key: 'contentQuality', label: 'Content Quality', icon: '📝' },
   { key: 'schemaMarkup', label: 'Schema Markup', icon: '🏗️' },
   { key: 'performance', label: 'Performance', icon: '⚡' },
-  { key: 'accessibility', label: 'Accessibility', icon: '♿' },
+  // Static-HTML signals only; not scored into the overall AEO score and not a
+  // WCAG/compliance assessment. Contrast and keyboard checks are reported as
+  // not assessable (they require a rendered-page audit).
+  { key: 'accessibility', label: 'Accessibility Signals (static HTML)', icon: '♿' },
 ];
 
 export function scoreLabel(score: number): string {

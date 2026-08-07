@@ -1,5 +1,18 @@
 export type CrawlerTier = 'critical' | 'important' | 'other' | 'seo';
 
+// Crawler purposes are materially different controls and must never be conflated
+// in interpretation: blocking a 'training' bot is a legitimate rights posture,
+// not an AI-visibility defect; 'search_index' and 'user_fetch' access is what
+// citation availability actually depends on.
+export type CrawlerPurpose = 'training' | 'search_index' | 'user_fetch' | 'seo';
+
+export interface PurposeBreakdown {
+  accessible: number;
+  partial: number;
+  blocked: number;
+  undeterminable: number;
+}
+
 export type RobotsTxtStatus = 'allowed' | 'disallowed' | 'no_robots_txt' | 'error';
 // 'refused' = HTTP-layer refusal (403/429/other 4xx). A UA simulation cannot present
 // verified crawler IPs, so a refusal never proves the real crawler is blocked.
@@ -73,6 +86,8 @@ export interface CrawlerResult {
   overall_status: OverallStatus;
   blocker_layer: BlockerLayer;
   blocker_detail: string;
+  // Optional because reports stored before registry v2026-08 predate the field.
+  purpose?: CrawlerPurpose;
 }
 
 export interface Fix {
@@ -108,11 +123,18 @@ export interface ReportSummary {
   // rather than asserting a coverage they never measured.
   undeterminable?: number;
   primary_blocker: string | null;
+  // Informational separation of crawler purposes (registry v2026-08). Does NOT
+  // change how aeo_readiness_score is computed. Optional: legacy reports lack it.
+  by_purpose?: Record<CrawlerPurpose, PurposeBreakdown>;
 }
 
 export interface AeoReadinessReport {
   url: string;
   tested_at: string;
+  // Which crawler registry produced this report. Optional only because reports
+  // stored before 2026-08 predate versioning; the builder always stamps it.
+  registry_version?: string;
+  engine_version?: string;
   aeo_readiness_score: number;
   summary: ReportSummary;
   crawler_results: CrawlerResult[];
@@ -125,8 +147,10 @@ export interface CrawlerDefinition {
   name: string;
   user_agent: string;
   tier: CrawlerTier;
-  // 'robots_only': a robots.txt directive token, not a fetchable bot (Google-Extended).
-  // Never fetched over HTTP; verdict comes from the robots.txt check alone.
+  purpose: CrawlerPurpose;
+  // 'robots_only': a robots.txt directive token, not a fetchable bot
+  // (Google-Extended, Applebot-Extended). Never fetched over HTTP; verdict
+  // comes from the robots.txt check alone.
   check_type?: 'http' | 'robots_only';
 }
 

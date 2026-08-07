@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { computeScore } from './scoring';
-import type { CrawlerResult, CrawlerDefinition, CrawlerTier, OverallStatus, CrawlerTests } from './types';
+import { computeScore, computePurposeBreakdown } from './scoring';
+import type { CrawlerResult, CrawlerDefinition, CrawlerTier, CrawlerPurpose, OverallStatus, CrawlerTests } from './types';
 
-function def(name: string, tier: CrawlerTier): CrawlerDefinition {
-  return { name, tier, user_agent: 'Test/1.0' };
+function def(name: string, tier: CrawlerTier, purpose: CrawlerPurpose = 'training'): CrawlerDefinition {
+  return { name, tier, purpose, user_agent: 'Test/1.0' };
 }
 
 function result(name: string, status: OverallStatus): CrawlerResult {
@@ -119,5 +119,47 @@ describe('computeScore', () => {
     ];
     // GPTBot: 1*4=4, UnknownBot: 0*1=0 → earned=4, total=5 → 80
     expect(computeScore(results, crawlers)).toBe(80);
+  });
+});
+
+describe('computePurposeBreakdown', () => {
+  it('groups results by registry purpose', () => {
+    const crawlers = [
+      def('GPTBot', 'critical', 'training'),
+      def('OAI-SearchBot', 'important', 'search_index'),
+      def('ChatGPT-User', 'important', 'user_fetch'),
+      def('Googlebot', 'seo', 'seo'),
+    ];
+    const results = [
+      result('GPTBot', 'blocked'),
+      result('OAI-SearchBot', 'accessible'),
+      result('ChatGPT-User', 'undeterminable'),
+      result('Googlebot', 'partial'),
+    ];
+    const bd = computePurposeBreakdown(results, crawlers);
+    expect(bd.training).toEqual({ accessible: 0, partial: 0, blocked: 1, undeterminable: 0 });
+    expect(bd.search_index).toEqual({ accessible: 1, partial: 0, blocked: 0, undeterminable: 0 });
+    expect(bd.user_fetch).toEqual({ accessible: 0, partial: 0, blocked: 0, undeterminable: 1 });
+    expect(bd.seo).toEqual({ accessible: 0, partial: 1, blocked: 0, undeterminable: 0 });
+  });
+
+  it('does not change computeScore — training and retrieval remain blended in the headline (informational separation only)', () => {
+    const crawlers = [
+      def('GPTBot', 'critical', 'training'),
+      def('PerplexityBot', 'critical', 'search_index'),
+    ];
+    const results = [result('GPTBot', 'blocked'), result('PerplexityBot', 'accessible')];
+    // Existing headline semantics preserved: 4 of 8 weight earned → 50
+    expect(computeScore(results, crawlers)).toBe(50);
+  });
+
+  it('skips results with no registry definition', () => {
+    const bd = computePurposeBreakdown([result('GhostBot', 'blocked')], []);
+    expect(bd.training.blocked + bd.search_index.blocked + bd.user_fetch.blocked + bd.seo.blocked).toBe(0);
+  });
+
+  it('all four purposes are always present with zeroed counters', () => {
+    const bd = computePurposeBreakdown([], []);
+    expect(Object.keys(bd).sort()).toEqual(['search_index', 'seo', 'training', 'user_fetch']);
   });
 });

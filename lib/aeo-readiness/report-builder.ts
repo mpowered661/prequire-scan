@@ -10,12 +10,12 @@ import type {
   ReportSummary,
   RawCrawlerFetch,
 } from './types';
-import { getActiveCrawlers } from './crawlers';
+import { getActiveCrawlers, REGISTRY_VERSION } from './crawlers';
 import { runHttpTests } from './http-tester';
 import { checkRobotsTxt } from './robots-parser';
 import { analyzeContentDelivery, analyzeMetaTags, analyzeCloaking } from './content-analyzer';
 import { buildDetectedStack, detectWaf } from './waf-fingerprinter';
-import { computeScore } from './scoring';
+import { computeScore, computePurposeBreakdown } from './scoring';
 import { generateFixes } from './fix-library';
 
 async function checkLlmsTxt(url: string): Promise<LlmsTxt> {
@@ -255,6 +255,7 @@ export async function buildReport(
         overall_status,
         blocker_layer,
         blocker_detail,
+        purpose: crawler.purpose,
       };
     }),
   );
@@ -278,6 +279,7 @@ export async function buildReport(
             crawler_name: crawler.name, user_agent: crawler.user_agent, tests,
             overall_status: 'blocked' as const, blocker_layer: 'robots_txt' as const,
             blocker_detail: robotsTxt.matched_rule ?? 'Disallowed by robots.txt',
+            purpose: crawler.purpose,
           };
         }
         if (robotsTxt.status === 'error') {
@@ -285,12 +287,14 @@ export async function buildReport(
             crawler_name: crawler.name, user_agent: crawler.user_agent, tests,
             overall_status: 'undeterminable' as const, blocker_layer: 'unknown' as const,
             blocker_detail: 'robots.txt could not be verified — token status undeterminable',
+            purpose: crawler.purpose,
           };
         }
         return {
           crawler_name: crawler.name, user_agent: crawler.user_agent, tests,
           overall_status: 'accessible' as const, blocker_layer: 'none' as const,
           blocker_detail: 'Permitted by robots.txt (directive token — robots-only check)',
+          purpose: crawler.purpose,
         };
       }),
   );
@@ -312,11 +316,13 @@ export async function buildReport(
     blocked: crawlerResults.filter((r) => r.overall_status === 'blocked').length,
     undeterminable: crawlerResults.filter((r) => r.overall_status === 'undeterminable').length,
     primary_blocker: getPrimaryBlocker(crawlerResults),
+    by_purpose: computePurposeBreakdown(crawlerResults, activeCrawlers),
   };
 
   return {
     url,
     tested_at: testedAt,
+    registry_version: REGISTRY_VERSION,
     aeo_readiness_score: score,
     summary,
     crawler_results: crawlerResults,

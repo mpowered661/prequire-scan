@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createHash } from 'crypto';
 import { buildReport } from '@/lib/aeo-readiness/report-builder';
+import { resolveStudyAuth } from '@/lib/study';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -96,6 +97,30 @@ export async function POST(req: NextRequest) {
       normalizedUrl = parsed.toString();
     } catch {
       return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
+    }
+
+    // Study mode: identical report pipeline, zero production side effects —
+    // no row inserted, no rate-limit interaction. Fail-closed on a bad token.
+    const studyAuth = resolveStudyAuth(
+      body.study,
+      req.headers.get('x-study-token'),
+      process.env.STUDY_MODE_TOKEN,
+    );
+    if (studyAuth === 'rejected') {
+      return NextResponse.json({ error: 'Study mode unavailable.' }, { status: 403 });
+    }
+    if (studyAuth === 'authorized') {
+      const includeSeoStudy = body.include_seo_bots === true;
+      const report = await buildReport(normalizedUrl, { include_seo_bots: includeSeoStudy });
+      // The report itself is the reproducible export: it carries
+      // registry_version, tested_at, per-crawler evidence, and purpose breakdown.
+      return NextResponse.json({
+        study: true,
+        persisted: false,
+        check_id: null,
+        score: report.aeo_readiness_score,
+        report,
+      });
     }
 
     // Optional JWT auth — unauthenticated requests are accepted but rate-limited more tightly

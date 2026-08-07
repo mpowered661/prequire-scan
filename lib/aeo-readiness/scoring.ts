@@ -1,4 +1,4 @@
-import type { CrawlerResult, CrawlerDefinition } from './types';
+import type { CrawlerResult, CrawlerDefinition, CrawlerPurpose, PurposeBreakdown } from './types';
 
 const TIER_WEIGHTS: Record<string, number> = {
   critical: 4,
@@ -35,4 +35,36 @@ export function computeScore(
 
   if (totalWeight === 0) return 0;
   return Math.round((earnedWeight / totalWeight) * 100);
+}
+
+// Informational separation of crawler purposes (registry v2026-08). Blocking a
+// training bot is a rights posture, not an AI-visibility defect, so purposes are
+// reported separately. This does NOT feed computeScore — headline scoring is
+// unchanged; the breakdown exists so reports and exports can distinguish
+// training vs search_index vs user_fetch access.
+export function computePurposeBreakdown(
+  results: CrawlerResult[],
+  activeCrawlers: CrawlerDefinition[],
+): Record<CrawlerPurpose, PurposeBreakdown> {
+  const purposeMap = new Map(activeCrawlers.map((c) => [c.name, c.purpose]));
+  const empty = (): PurposeBreakdown => ({
+    accessible: 0,
+    partial: 0,
+    blocked: 0,
+    undeterminable: 0,
+  });
+  const breakdown: Record<CrawlerPurpose, PurposeBreakdown> = {
+    training: empty(),
+    search_index: empty(),
+    user_fetch: empty(),
+    seo: empty(),
+  };
+
+  for (const r of results) {
+    const purpose = purposeMap.get(r.crawler_name);
+    if (!purpose) continue; // result with no registry definition — not classifiable
+    breakdown[purpose][r.overall_status] += 1;
+  }
+
+  return breakdown;
 }
