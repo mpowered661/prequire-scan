@@ -18,10 +18,21 @@ vi.mock('@/lib/supabase/scanResults', () => ({ saveScanResult: saveScanResultMoc
 
 import { POST } from './route';
 
+// Contract-valid ScanResult fixture: the route's shape guard requires all four
+// category scores, and overallScore is recomputed server-side as the mean of
+// content/schema/performance (accessibility excluded) → (70+80+90)/3 = 80.
+const cat = (score: number) => ({ score, checks: [], recommendations: [] });
 const SCAN_RESULT = {
-  overallScore: 71,
-  categories: { content: { score: 70 } },
+  overallScore: 71, // model's own number — deliberately ignored by the route
+  summary: 'Test summary.',
+  categories: {
+    contentQuality: cat(70),
+    schemaMarkup: cat(80),
+    performance: cat(90),
+    accessibility: cat(10),
+  },
 };
+const EXPECTED_OVERALL = 80;
 
 /** Minimal stand-in for the only two NextRequest members the route touches. */
 function makeRequest(body: Record<string, unknown>): NextRequest {
@@ -93,7 +104,14 @@ describe('POST /api/scan — lead logging is non-fatal', () => {
     expect(complete).toBeDefined();
     expect(events.map((e) => e.stage)).not.toContain('error');
     // Result payload is intact — the failure did not degrade the response.
-    expect((complete!.data as { result: unknown }).result).toEqual(SCAN_RESULT);
+    // overallScore is the server-side recompute (accessibility excluded) and
+    // scan_meta is stamped; categories pass through untouched.
+    const result = (complete!.data as { result: Record<string, unknown> }).result;
+    expect(result.categories).toEqual(SCAN_RESULT.categories);
+    expect(result.overallScore).toBe(EXPECTED_OVERALL);
+    expect(result.scan_meta).toMatchObject({
+      overall_score_basis: 'content_schema_performance_mean',
+    });
   });
 
   it('surfaces the failure through safe operational logging only', async () => {

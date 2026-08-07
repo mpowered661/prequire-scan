@@ -135,6 +135,14 @@ export async function POST(req: NextRequest) {
             .replace(/```\s*/g, '')
             .trim();
           result = JSON.parse(cleaned) as ScanResult;
+          // Shape guard: the recompute below reads these three scores. A model
+          // response that parses but lacks them is a failed analysis, not a
+          // server error — surface it as such rather than throwing deeper in.
+          for (const key of ['contentQuality', 'schemaMarkup', 'performance', 'accessibility'] as const) {
+            if (typeof result?.categories?.[key]?.score !== 'number') {
+              throw new Error(`missing categories.${key}.score`);
+            }
+          }
         } catch {
           console.error('[scan] JSON parse failed. stop_reason:', response.stop_reason, 'raw:', rawText.slice(0, 300));
           controller.enqueue(encode({
