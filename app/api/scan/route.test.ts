@@ -22,6 +22,7 @@ import { POST } from './route';
 // category scores, and overallScore is recomputed server-side as the mean of
 // content/schema/performance (accessibility excluded) → (70+80+90)/3 = 80.
 const cat = (score: number) => ({ score, checks: [], recommendations: [] });
+const a11yCheck = (status: string) => ({ label: 'x', status, detail: '' });
 const SCAN_RESULT = {
   overallScore: 71, // model's own number — deliberately ignored by the route
   summary: 'Test summary.',
@@ -29,10 +30,20 @@ const SCAN_RESULT = {
     contentQuality: cat(70),
     schemaMarkup: cat(80),
     performance: cat(90),
-    accessibility: cat(10),
+    // model claims 10; server recomputes from statuses:
+    // pass+pass+warn+pass = 24+24+12+24 = 84, no bonus
+    accessibility: {
+      score: 10,
+      checks: [
+        a11yCheck('pass'), a11yCheck('pass'), a11yCheck('warn'), a11yCheck('pass'),
+        a11yCheck('not_assessable'), a11yCheck('not_assessable'),
+      ],
+      recommendations: [],
+    },
   },
 };
 const EXPECTED_OVERALL = 80;
+const EXPECTED_A11Y = 84;
 
 /** Minimal stand-in for the only two NextRequest members the route touches. */
 function makeRequest(body: Record<string, unknown>): NextRequest {
@@ -93,8 +104,9 @@ describe('POST /api/scan — result is never gated on email', () => {
 
     expect(complete).toBeDefined();
     // Full result delivered to an anonymous visitor — no email required.
-    const result = (complete!.data as { result: Record<string, unknown> }).result;
-    expect(result.categories).toEqual(SCAN_RESULT.categories);
+    const result = (complete!.data as { result: { categories: Record<string, { score: number }> } }).result;
+    expect(result.categories.contentQuality).toEqual(SCAN_RESULT.categories.contentQuality);
+    expect(result.categories.accessibility.score).toBe(EXPECTED_A11Y);
     expect(saveScanResultMock).toHaveBeenCalledWith(expect.objectContaining({ email: null }));
   });
 });
@@ -119,10 +131,11 @@ describe('POST /api/scan — lead logging is non-fatal', () => {
     expect(complete).toBeDefined();
     expect(events.map((e) => e.stage)).not.toContain('error');
     // Result payload is intact — the failure did not degrade the response.
-    // overallScore is the server-side recompute (accessibility excluded) and
-    // scan_meta is stamped; categories pass through untouched.
-    const result = (complete!.data as { result: Record<string, unknown> }).result;
-    expect(result.categories).toEqual(SCAN_RESULT.categories);
+    // overallScore and the accessibility category score are server-side
+    // recomputes; scan_meta is stamped; everything else passes through.
+    const result = (complete!.data as { result: { categories: Record<string, { score: number }> } & Record<string, unknown> }).result;
+    expect(result.categories.contentQuality).toEqual(SCAN_RESULT.categories.contentQuality);
+    expect(result.categories.accessibility.score).toBe(EXPECTED_A11Y);
     expect(result.overallScore).toBe(EXPECTED_OVERALL);
     expect(result.scan_meta).toMatchObject({
       overall_score_basis: 'content_schema_performance_mean',

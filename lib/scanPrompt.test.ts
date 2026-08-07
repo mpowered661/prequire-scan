@@ -1,11 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import {
+  computeAccessibilityScore,
   computeOverallScore,
   SCAN_SYSTEM_PROMPT,
   SCAN_PROMPT_VERSION,
+  type CheckItem,
   type ScanResult,
   type CategoryResult,
 } from './scanPrompt';
+
+function check(status: CheckItem['status']): CheckItem {
+  return { label: 'x', status, detail: '' };
+}
 
 function cat(score: number): CategoryResult {
   return { score, checks: [], recommendations: [] };
@@ -49,6 +55,43 @@ describe('computeOverallScore', () => {
     const c = categories(55, 65, 75, 85);
     const scores = Array.from({ length: 5 }, () => computeOverallScore(c));
     expect(new Set(scores).size).toBe(1);
+  });
+});
+
+// Server-side rubric — added after live verification caught the model returning
+// 92 for four passing checks (rubric says 96 + 4 bonus = 100).
+describe('computeAccessibilityScore', () => {
+  it('four passes = 96 base + 4 bonus = 100; not_assessable contributes nothing', () => {
+    const checks = [
+      check('pass'), check('pass'), check('pass'), check('pass'),
+      check('not_assessable'), check('not_assessable'),
+    ];
+    expect(computeAccessibilityScore(checks)).toBe(100);
+  });
+
+  it('warn is half credit, fail is zero, no bonus unless all pass', () => {
+    // 24 + 12 + 0 + 24 = 60, no bonus
+    expect(
+      computeAccessibilityScore([
+        check('pass'), check('warn'), check('fail'), check('pass'),
+        check('not_assessable'), check('not_assessable'),
+      ]),
+    ).toBe(60);
+  });
+
+  it('all fail = 0; no scored checks = 0', () => {
+    expect(
+      computeAccessibilityScore([check('fail'), check('fail'), check('fail'), check('fail')]),
+    ).toBe(0);
+    expect(computeAccessibilityScore([check('not_assessable'), check('not_assessable')])).toBe(0);
+    expect(computeAccessibilityScore([])).toBe(0);
+  });
+
+  it('is deterministic and bounded to 0-100', () => {
+    const checks = [check('pass'), check('pass'), check('pass'), check('pass')];
+    const runs = Array.from({ length: 5 }, () => computeAccessibilityScore(checks));
+    expect(new Set(runs).size).toBe(1);
+    expect(runs[0]).toBeLessThanOrEqual(100);
   });
 });
 

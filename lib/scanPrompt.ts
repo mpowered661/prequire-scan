@@ -39,6 +39,27 @@ export interface ScanResult {
   scan_meta?: ScanMeta;
 }
 
+// Server-side accessibility category score. The prompt states this formula but
+// live verification (2026-08-06) showed the model deviating from its own
+// arithmetic (4 passes returned 92, not 100) — so the server applies the
+// rubric to the model's check statuses deterministically: the scored checks
+// split 96 base points (24 each when 4 are scored), warn = half, fail = 0,
+// +4 bonus when every scored check passes. not_assessable never contributes.
+export function computeAccessibilityScore(checks: CheckItem[]): number {
+  const scored = checks.filter(
+    (c) => c.status === 'pass' || c.status === 'warn' || c.status === 'fail',
+  );
+  if (scored.length === 0) return 0;
+  const perCheck = 96 / scored.length;
+  let points = 0;
+  for (const c of scored) {
+    if (c.status === 'pass') points += perCheck;
+    else if (c.status === 'warn') points += perCheck / 2;
+  }
+  const bonus = scored.every((c) => c.status === 'pass') ? 4 : 0;
+  return Math.round(Math.min(100, Math.max(0, points + bonus)));
+}
+
 // Server-side overall score: mean of the three categories whose inputs the
 // model actually receives in full. Accessibility is excluded — its checks are
 // judged from static HTML only and must not move the headline number.
