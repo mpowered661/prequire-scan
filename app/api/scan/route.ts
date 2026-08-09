@@ -8,6 +8,7 @@ import {
   computeOverallScore,
   ScanResult,
 } from '@/lib/scanPrompt';
+import { buildExtractionResilience } from '@/lib/extraction-resilience';
 import { resolveStudyAuth, buildStudyEnvelope } from '@/lib/study';
 import { logScanLead } from '@/lib/supabase/scanLeads';
 import { saveScanResult } from '@/lib/supabase/scanResults';
@@ -168,6 +169,16 @@ export async function POST(req: NextRequest) {
           model: SCAN_MODEL,
           overall_score_basis: 'content_schema_performance_mean',
         };
+
+        // Extraction Resilience — fully deterministic, no model call, computed
+        // from the same HTML already fetched. Strictly non-fatal and reported
+        // as an independent result: it never touches overallScore or any
+        // existing category. A failure here must not cost the visitor a scan.
+        try {
+          result.extraction_resilience = buildExtractionResilience(normalizedUrl, html);
+        } catch (resilienceErr) {
+          console.error('[scan] extraction resilience failed (non-fatal):', resilienceErr);
+        }
 
         if (isStudy) {
           // No persistence, no lead, no email, no GHL linkage, no workflows.

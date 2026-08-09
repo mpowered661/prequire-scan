@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import type { ScanResult } from '@/lib/scanPrompt';
 import { ScoreGauge, CategoryCard } from '@/components/ScanDisplay';
 import { EmailReportForm } from '@/components/EmailReportForm';
+import { ExtractionResiliencePanel } from '@/components/ExtractionResiliencePanel';
 import { CATEGORIES, scoreLabel, scoreBand } from '@/lib/scanUtils';
 import { track } from '@/lib/track';
 
@@ -327,6 +328,13 @@ function ScanPageInner() {
               />
             ))}
           </div>
+
+          {/* Extraction Resilience — reported independently of the AEO score. */}
+          {result.extraction_resilience && (
+            <div className="mt-6">
+              <ExtractionResiliencePanel result={result.extraction_resilience} />
+            </div>
+          )}
 
           {/* Bottom CTA */}
           <div className="mt-10 bg-gradient-to-r from-orange-500/10 to-orange-600/5 border border-orange-500/20 rounded-2xl p-8 text-center">

@@ -1,3 +1,5 @@
+import type { ExtractionResilienceResult } from '@/lib/extraction-resilience/types';
+
 // Bump when the system prompt, check set, or scoring basis changes — stored
 // results stamp this so any score can say what produced it.
 export const SCAN_PROMPT_VERSION = '2026-08';
@@ -37,6 +39,13 @@ export interface ScanResult {
   summary: string; // 1-sentence overall
   // Optional: results stored before 2026-08 predate version stamping.
   scan_meta?: ScanMeta;
+  // Extraction Resilience — an independent, fully deterministic result that
+  // asks whether important meaning survives machine extraction. Deliberately a
+  // sibling of `categories`, not a member: computeOverallScore() reads only
+  // contentQuality, schemaMarkup, and performance, so this cannot move the
+  // headline AEO score. Optional because it is computed non-fatally and
+  // because rows stored before it existed do not carry it.
+  extraction_resilience?: ExtractionResilienceResult;
 }
 
 // Server-side accessibility category score. The prompt states this formula but
@@ -125,11 +134,17 @@ Return ONLY valid JSON matching this exact shape, no markdown fences:
   }
 }`;
 
-interface ExtractedSchema {
+export interface ExtractedSchema {
   blocksText: string;   // raw JSON text of all ld+json blocks, ready for the prompt
   types: string[];      // deduplicated list of all @type values found across all nodes
   hasSchema: boolean;
   hasMalformed: boolean;
+  // Parsed root value of each successfully parsed block. Added for Extraction
+  // Resilience, which needs to read declared values and organization names out
+  // of structured data rather than re-parsing it with a second parser.
+  // Purely additive — existing callers are unaffected.
+  nodes: unknown[];
+  blockCount: number;   // successfully parsed blocks
 }
 
 export function extractJsonLd(rawHtml: string): ExtractedSchema {
@@ -138,6 +153,7 @@ export function extractJsonLd(rawHtml: string): ExtractedSchema {
   const blockRegex = /<script\b[^>]*\btype=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
   const blocks: string[] = [];
   const types = new Set<string>();
+  const nodes: unknown[] = [];
   let hasMalformed = false;
   let match: RegExpExecArray | null;
 
@@ -155,6 +171,7 @@ export function extractJsonLd(rawHtml: string): ExtractedSchema {
     }
 
     blocks.push(raw);
+    nodes.push(parsed);
 
     // Collect @type values — handle both a root object and a @graph array
     const collectTypes = (node: unknown) => {
@@ -175,7 +192,14 @@ export function extractJsonLd(rawHtml: string): ExtractedSchema {
     ? blocks.join('\n\n')
     : 'None detected.';
 
-  return { blocksText, types: [...types], hasSchema, hasMalformed };
+  return {
+    blocksText,
+    types: [...types],
+    hasSchema,
+    hasMalformed,
+    nodes,
+    blockCount: nodes.length,
+  };
 }
 
 function preprocessHtml(html: string): string {

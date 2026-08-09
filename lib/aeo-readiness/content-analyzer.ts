@@ -15,7 +15,10 @@ const JS_CHALLENGE_INDICATORS = [
   'ray id',
 ] as const;
 
-function stripHtml(html: string): string {
+// Exported so the Extraction Resilience EXTRACT_B path can reuse this exact
+// flattening rather than reimplementing a second lossy extractor. Behavior is
+// unchanged for existing callers.
+export function stripHtml(html: string): string {
   return html
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')

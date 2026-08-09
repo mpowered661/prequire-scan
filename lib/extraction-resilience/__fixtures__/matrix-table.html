@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Q3 Revenue by Region | Vantage Group</title>
+  <link rel="canonical" href="https://vantagegroup.example/q3-revenue">
+  <meta property="og:site_name" content="Vantage Group">
+</head>
+<body>
+  <main>
+    <h1>Q3 Revenue by Region</h1>
+
+    <!-- The known test case, exactly as specified: a correctly marked-up matrix
+         table with NO caption, NO footnote, and NO claim qualifiers.
+         EXTRACT_A must retain North+2025=4.2, North+2026=5.1,
+         South+2025=9.8, South+2026=3.3. The flattened extractor collapses this
+         to "Q3 Revenue by Region Region 2025 2026 North 4.2 5.1 South 9.8 3.3",
+         where every column-header binding is lost.
+         Because the table carries no qualifiers, qualifier_resilience must be
+         not_applicable here — not 0/N. -->
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Region</th>
+          <th scope="col">2025</th>
+          <th scope="col">2026</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row">North</th><td>4.2</td><td>5.1</td></tr>
+        <tr><th scope="row">South</th><td>9.8</td><td>3.3</td></tr>
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>
