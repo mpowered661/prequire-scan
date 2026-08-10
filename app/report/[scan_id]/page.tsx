@@ -3,6 +3,8 @@ import type { Metadata } from 'next';
 import { getScanResult } from '@/lib/supabase/scanResults';
 import { ScoreGauge, CategoryCard } from '@/components/ScanDisplay';
 import { CATEGORIES, scoreLabel } from '@/lib/scanUtils';
+import { ExtractionResiliencePanel } from '@/components/ExtractionResiliencePanel';
+import { parseExtractionResilience } from '@/lib/extraction-resilience/guard';
 
 interface Props {
   params: Promise<{ scan_id: string }>;
@@ -40,6 +42,7 @@ export default async function ReportPage({ params }: Props) {
   if (!row) notFound();
 
   const result = row.result_json;
+  const resilience = parseExtractionResilience(result?.extraction_resilience);
   const label = scoreLabel(row.overall_score);
   const scannedAt = new Date(row.created_at).toLocaleDateString('en-US', {
     year: 'numeric',
@@ -87,6 +90,15 @@ export default async function ReportPage({ params }: Props) {
             />
           ))}
         </div>
+
+        {/* Extraction Resilience — parsed defensively: rows stored before this
+            feature existed have no such key, and a malformed blob must render
+            nothing rather than a confident verdict. */}
+        {resilience && (
+          <div className="mt-6">
+            <ExtractionResiliencePanel result={resilience} />
+          </div>
+        )}
 
         {/* Bottom CTA */}
         <div className="mt-10 bg-gradient-to-r from-orange-500/10 to-orange-600/5 border border-orange-500/20 rounded-2xl p-8 text-center">

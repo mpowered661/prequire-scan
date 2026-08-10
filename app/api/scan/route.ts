@@ -2,11 +2,18 @@ import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import {
   SCAN_SYSTEM_PROMPT,
+  SCAN_PROMPT_VERSION,
   buildUserPrompt,
+  computeAccessibilityScore,
+  computeOverallScore,
   ScanResult,
 } from '@/lib/scanPrompt';
+import { buildExtractionResilience } from '@/lib/extraction-resilience';
+import { resolveStudyAuth, buildStudyEnvelope } from '@/lib/study';
 import { logScanLead } from '@/lib/supabase/scanLeads';
 import { saveScanResult } from '@/lib/supabase/scanResults';
+
+const SCAN_MODEL = 'claude-haiku-4-5-20251001';
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -44,6 +51,21 @@ export async function POST(req: NextRequest) {
           controller.close();
           return;
         }
+
+        // Study mode: identical analysis, zero production side effects.
+        // Fail-closed — a study request with a missing/invalid token errors
+        // rather than silently running with persistence.
+        const studyAuth = resolveStudyAuth(
+          body.study,
+          req.headers.get('x-study-token'),
+          process.env.STUDY_MODE_TOKEN,
+        );
+        if (studyAuth === 'rejected') {
+          controller.enqueue(encode({ stage: 'error', message: 'Study mode unavailable.' }));
+          controller.close();
+          return;
+        }
+        const isStudy = studyAuth === 'authorized';
 
         // Normalize URL
         let parsedUrl: URL;
@@ -90,7 +112,7 @@ export async function POST(req: NextRequest) {
         controller.enqueue(encode({ stage: 'analyzing', message: 'Analyzing with Claude...' }));
 
         const response = await anthropic.messages.create({
-          model: 'claude-haiku-4-5-20251001',
+          model: SCAN_MODEL,
           max_tokens: 8192,
           temperature: 0, // pin for scoring consistency — reduces run-to-run score variance
           system: SCAN_SYSTEM_PROMPT,
@@ -115,11 +137,62 @@ export async function POST(req: NextRequest) {
             .replace(/```\s*/g, '')
             .trim();
           result = JSON.parse(cleaned) as ScanResult;
+          // Shape guard: the recompute below reads these three scores. A model
+          // response that parses but lacks them is a failed analysis, not a
+          // server error — surface it as such rather than throwing deeper in.
+          for (const key of ['contentQuality', 'schemaMarkup', 'performance', 'accessibility'] as const) {
+            if (typeof result?.categories?.[key]?.score !== 'number') {
+              throw new Error(`missing categories.${key}.score`);
+            }
+          }
         } catch {
           console.error('[scan] JSON parse failed. stop_reason:', response.stop_reason, 'raw:', rawText.slice(0, 300));
           controller.enqueue(encode({
             stage: 'error',
             message: 'Analysis failed to parse. Please try again.',
+          }));
+          controller.close();
+          return;
+        }
+
+        // Neither the model's overallScore nor its accessibility arithmetic is
+        // trusted: the accessibility category score is recomputed from check
+        // statuses (deterministic rubric), and overallScore from the
+        // content/schema/performance mean. Accessibility signals (LLM-judged
+        // from static HTML) are excluded from the overall score.
+        result.categories.accessibility.score = computeAccessibilityScore(
+          result.categories.accessibility.checks,
+        );
+        result.overallScore = computeOverallScore(result.categories);
+        result.scan_meta = {
+          prompt_version: SCAN_PROMPT_VERSION,
+          model: SCAN_MODEL,
+          overall_score_basis: 'content_schema_performance_mean',
+        };
+
+        // Extraction Resilience — fully deterministic, no model call, computed
+        // from the same HTML already fetched. Strictly non-fatal and reported
+        // as an independent result: it never touches overallScore or any
+        // existing category. A failure here must not cost the visitor a scan.
+        try {
+          result.extraction_resilience = buildExtractionResilience(normalizedUrl, html);
+        } catch (resilienceErr) {
+          console.error('[scan] extraction resilience failed (non-fatal):', resilienceErr);
+        }
+
+        if (isStudy) {
+          // No persistence, no lead, no email, no GHL linkage, no workflows.
+          controller.enqueue(encode({
+            stage: 'complete',
+            data: {
+              result,
+              url: normalizedUrl,
+              scan_id: null,
+              study: buildStudyEnvelope(normalizedUrl, html, {
+                prompt_version: SCAN_PROMPT_VERSION,
+                model: SCAN_MODEL,
+              }),
+            },
           }));
           controller.close();
           return;

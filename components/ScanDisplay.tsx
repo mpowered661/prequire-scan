@@ -43,13 +43,15 @@ export function ScoreGauge({ score }: { score: number }) {
 }
 
 const STATUS_STYLES = {
-  pass: { dot: 'bg-green-500', text: 'text-green-400' },
-  warn: { dot: 'bg-orange-400', text: 'text-orange-300' },
-  fail: { dot: 'bg-red-500', text: 'text-red-400' },
+  pass: { dot: 'bg-green-500', text: 'text-green-400', label: 'pass' },
+  warn: { dot: 'bg-orange-400', text: 'text-orange-300', label: 'warn' },
+  fail: { dot: 'bg-red-500', text: 'text-red-400', label: 'fail' },
+  // Not scored: the property cannot be verified from fetched HTML alone.
+  not_assessable: { dot: 'bg-slate-600', text: 'text-slate-400', label: 'not assessable' },
 } as const;
 
 export function CheckRow({ check }: { check: CheckItem }) {
-  const styles = STATUS_STYLES[check.status];
+  const styles = STATUS_STYLES[check.status] ?? STATUS_STYLES.not_assessable;
   return (
     <div className="flex items-start gap-3 py-2">
       <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${styles.dot}`} />
@@ -57,7 +59,7 @@ export function CheckRow({ check }: { check: CheckItem }) {
         <span className="text-sm text-slate-200">{check.label}</span>
         <p className="text-xs text-slate-500 mt-0.5">{check.detail}</p>
       </div>
-      <span className={`text-xs font-mono uppercase ${styles.text}`}>{check.status}</span>
+      <span className={`text-xs font-mono uppercase whitespace-nowrap ${styles.text}`}>{styles.label}</span>
     </div>
   );
 }

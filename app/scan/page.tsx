@@ -4,7 +4,10 @@ import { useState, useRef, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { ScanResult } from '@/lib/scanPrompt';
 import { ScoreGauge, CategoryCard } from '@/components/ScanDisplay';
-import { CATEGORIES, scoreLabel } from '@/lib/scanUtils';
+import { EmailReportForm } from '@/components/EmailReportForm';
+import { ExtractionResiliencePanel } from '@/components/ExtractionResiliencePanel';
+import { CATEGORIES, scoreLabel, scoreBand } from '@/lib/scanUtils';
+import { track } from '@/lib/track';
 
 // ── Streaming progress ───────────────────────────────────────
 const STAGES = [
@@ -149,6 +152,11 @@ function ScanPageInner() {
             setResult(payload.result);
             setScannedUrl(payload.url);
             if (payload.scan_id) setScanId(payload.scan_id);
+            track('scan_completed', {
+              surface: 'scan',
+              band: scoreBand(payload.result.overallScore),
+              ...(payload.scan_id ? { scan_id: payload.scan_id } : {}),
+            });
             setTimeout(
               () => resultsRef.current?.scrollIntoView({ behavior: 'smooth' }),
               300
@@ -289,6 +297,25 @@ function ScanPageInner() {
             </div>
           </div>
 
+          {/* Optional email capture — result above is fully visible either way.
+              Landing-page visitors who already supplied an email get the report
+              queued automatically (existing flow) and never see this form. */}
+          {!pubEmail && (
+            <div className="mb-8">
+              <EmailReportForm
+                url={scannedUrl}
+                score={result.overallScore}
+                surface="scan"
+                meta={{
+                  scan_id: scanId,
+                  prompt_version: result.scan_meta?.prompt_version ?? null,
+                  model: result.scan_meta?.model ?? null,
+                }}
+                utm={utmParams}
+              />
+            </div>
+          )}
+
           {/* Category grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {CATEGORIES.map(({ key, label, icon }) => (
@@ -301,6 +328,13 @@ function ScanPageInner() {
               />
             ))}
           </div>
+
+          {/* Extraction Resilience — reported independently of the AEO score. */}
+          {result.extraction_resilience && (
+            <div className="mt-6">
+              <ExtractionResiliencePanel result={result.extraction_resilience} />
+            </div>
+          )}
 
           {/* Bottom CTA */}
           <div className="mt-10 bg-gradient-to-r from-orange-500/10 to-orange-600/5 border border-orange-500/20 rounded-2xl p-8 text-center">
