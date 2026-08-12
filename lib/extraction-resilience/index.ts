@@ -7,7 +7,7 @@ import type { ExtractionResilienceResult } from './types';
 
 // Bump when the extraction, checks, or band rules change, so a stored result
 // can always say what produced it — the same convention as SCAN_PROMPT_VERSION.
-export const EXTRACTION_RESILIENCE_VERSION = '2026-08-inc1';
+export const EXTRACTION_RESILIENCE_VERSION = '2026-08-inc2';
 
 // EXTRACT_B is reproducible from the page; only a short sample is retained so
 // stored results stay small.

@@ -32,6 +32,11 @@ const CHART_HINTS = [
 
 const PRICE_KEYS = ['price', 'lowprice', 'highprice', 'ratingvalue', 'amount'];
 
+// Labels that legitimately carry one value per offer, variant, or product card
+// on the same page. Same-label differences under these are different facts,
+// never a duplicate-label conflict.
+const COMMERCE_MULTIVALUE_LABELS = ['price', 'amount', 'rating'];
+
 function emptyMeasure(): ResilienceMeasure {
   return {
     preserved: 0,
@@ -179,18 +184,26 @@ function detectContradictions(a: StructuredExtraction): Contradiction[] {
     const declaredNum = parseValues(declared.value)[0]?.value;
     if (!declaredNum) continue;
 
-    for (const b of a.bindings) {
-      if (!b.label) continue;
-      if (!b.label.toLowerCase().includes(key.replace('value', ''))) continue;
-      if (b.value === declaredNum) continue;
-      out.push({
-        kind: 'schema_body_value',
-        detail: `Structured data declares ${declared.path} as ${declaredNum}, but the page states "${b.label}" as ${b.value}.`,
-        left: `${declared.path}=${declaredNum}`,
-        right: `${b.label}=${b.value}`,
-        important: true,
-      });
-    }
+    // A page may legitimately state several values of the same kind — a sale
+    // price beside the regular price, one price per offer or variant. Those are
+    // different facts, not two values for one fact, so a declared value is
+    // contradicted only when the page states this kind of value somewhere and
+    // NONE of those statements corroborates it.
+    const needle = key.replace('value', '');
+    const matching = a.bindings.filter(
+      (b) => b.label && b.label.toLowerCase().includes(needle),
+    );
+    if (matching.length === 0) continue;
+    if (matching.some((b) => b.value === declaredNum)) continue;
+
+    const shown = matching[0];
+    out.push({
+      kind: 'schema_body_value',
+      detail: `Structured data declares ${declared.path} as ${declaredNum}, but the page states "${shown.label}" as ${shown.value}.`,
+      left: `${declared.path}=${declaredNum}`,
+      right: `${shown.label}=${shown.value}`,
+      important: true,
+    });
   }
 
   const schemaName = a.identity.schemaOrgName;
@@ -211,11 +224,16 @@ function detectContradictions(a: StructuredExtraction): Contradiction[] {
 
   // The same label carrying two different values. The key includes dimensions,
   // because "North" legitimately has one value per column in a matrix table.
+  // Price-like labels are excluded entirely: "Price" repeats across offers,
+  // variants, and product cards, and without entity identity a difference
+  // between those is not two values for the same fact.
   const byLabel = new Map<string, Map<string, ValueBinding>>();
   for (const b of a.bindings) {
     if (!b.label) continue;
+    const lowerLabel = b.label.toLowerCase().trim();
+    if (COMMERCE_MULTIVALUE_LABELS.some((t) => lowerLabel.includes(t))) continue;
     const dims = b.dimensions.map((d) => d.label.toLowerCase()).sort().join('|');
-    const key = `${b.label.toLowerCase().trim()}#${dims}`;
+    const key = `${lowerLabel}#${dims}`;
     const bucket = byLabel.get(key) ?? new Map<string, ValueBinding>();
     if (!bucket.has(b.value)) bucket.set(b.value, b);
     byLabel.set(key, bucket);
