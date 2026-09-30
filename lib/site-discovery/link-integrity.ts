@@ -2,7 +2,7 @@ import { extractLinks } from './link-extract';
 import { selectTargets } from './link-targets';
 import { checkTargets, type TargetCheckStats } from './target-check';
 import type { BudgetTracker } from './fetcher';
-import type { ExtractedLink, TargetObservation } from './types';
+import type { ExtractedLink, FetchedPageArtifact, TargetObservation } from './types';
 import {
   LINK_EXTRACT_VERSION,
   LINK_INTEGRITY_VERSION,
@@ -48,16 +48,23 @@ export interface LinkIntegrityResult {
 }
 
 export function createHtmlSink(scopeOrigin: string): {
+  onPage: (artifact: FetchedPageArtifact) => void;
   onHtml: (sourceUrl: string, html: string) => void;
   pages: () => number;
   links: () => ExtractedLink[];
 } {
   const links: ExtractedLink[] = [];
   let pages = 0;
+  const ingest = (sourceUrl: string, html: string) => {
+    pages += 1;
+    links.push(...extractLinks(html, sourceUrl, scopeOrigin));
+  };
   return {
+    onPage(artifact) {
+      ingest(artifact.finalUrl, artifact.html);
+    },
     onHtml(sourceUrl, html) {
-      pages += 1;
-      links.push(...extractLinks(html, sourceUrl, scopeOrigin));
+      ingest(sourceUrl, html);
     },
     pages: () => pages,
     links: () => [...links],

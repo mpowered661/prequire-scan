@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { validateUrl } from './egress-policy';
 import { updateFetchState, type InventoryUrl } from './inventory';
 import { evaluateRobots, getCrawlDelayMs } from './robots-rules';
-import type { FetchConfig } from './types';
+import type { FetchConfig, OnPage } from './types';
 import {
   FETCHER_VERSION,
   HARD_MAX_PAGE_FETCHES,
@@ -60,6 +60,7 @@ export async function fetchSelected(
     robotsDeterminable: boolean;
     config: FetchConfig;
     budgetTracker: BudgetTracker;
+    onPage?: OnPage;
     onHtml?: (sourceUrl: string, html: string) => void;
   },
 ): Promise<FetchOutcomeSummary> {
@@ -101,8 +102,12 @@ export async function fetchSelected(
       stopReason = 'page_fetch_ceiling';
       break;
     }
-    const outcome = await fetchOne(row.urlNormalized!, opts.scopeOrigin, opts.budgetTracker, () => pageRequests++, () => retriesUsed++, opts.onHtml);
+    const outcome = await fetchOne(row.urlNormalized!, opts.scopeOrigin, opts.budgetTracker, () => pageRequests++, () => retriesUsed++);
     applyOutcome(row, outcome);
+    if (outcome.artifact) {
+      if (opts.onPage) opts.onPage(outcome.artifact);
+      if (opts.onHtml) opts.onHtml(outcome.artifact.finalUrl, outcome.artifact.html);
+    }
     if (outcome.reason === 'total_request_ceiling') {
       stopReason = 'total_request_ceiling';
       break;
@@ -134,6 +139,7 @@ type FetchOneOutcome = {
   contentSha256?: string | null;
   contentLength?: number | null;
   responseMs?: number | null;
+  artifact?: Parameters<OnPage>[0];
 };
 
 async function fetchOne(
@@ -142,11 +148,10 @@ async function fetchOne(
   budget: BudgetTracker,
   recordPageRequest: () => void,
   recordRetry: () => void,
-  onHtml?: (sourceUrl: string, html: string) => void,
 ): Promise<FetchOneOutcome> {
   let attempt = 0;
   for (;;) {
-    const outcome = await fetchAttempt(startUrl, scopeOrigin, budget, recordPageRequest, onHtml);
+    const outcome = await fetchAttempt(startUrl, scopeOrigin, budget, recordPageRequest);
     if ((outcome.reason === 'timeout' || outcome.reason === 'http_5xx') && attempt < MAX_RETRIES) {
       attempt += 1;
       recordRetry();
@@ -161,7 +166,6 @@ async function fetchAttempt(
   scopeOrigin: string,
   budget: BudgetTracker,
   recordPageRequest: () => void,
-  onHtml?: (sourceUrl: string, html: string) => void,
 ): Promise<FetchOneOutcome> {
   let nextUrl = url;
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
@@ -193,14 +197,25 @@ async function fetchAttempt(
       if (response.status >= 500) return { state: 'failed', reason: 'http_5xx', status: response.status, responseMs };
       const body = await readCappedBody(response);
       if (!body.ok) return { state: 'failed', reason: 'oversize', status: response.status, responseMs };
-      if (onHtml) onHtml(validated.url, new TextDecoder().decode(body.bytes));
+      const contentLength = body.bytes.length;
+      const contentSha256 = createHash('sha256').update(body.bytes).digest('hex');
+      const artifact = {
+        requestedUrl: url,
+        finalUrl: validated.url,
+        status: response.status,
+        html: new TextDecoder().decode(body.bytes),
+        contentSha256,
+        contentLength,
+        fetchedAt: now(),
+      };
       return {
         state: 'fetched',
         reason: null,
         status: response.status,
         responseMs,
-        contentLength: body.bytes.length,
-        contentSha256: createHash('sha256').update(body.bytes).digest('hex'),
+        contentLength,
+        contentSha256,
+        artifact,
       };
     } catch {
       return { state: 'failed', reason: 'timeout', status: null, responseMs: Date.now() - started };

@@ -1,6 +1,7 @@
 import type { DiscoveryConfig, ScanMode } from './types';
 import type { DiscoveryMethod, InventoryUrl } from './inventory';
 import type { LinkIntegrityManifestBlock } from './link-integrity';
+import type { PageAnalysisManifestBlock } from './page-analysis';
 import {
   DEFAULT_PAGE_BUDGET,
   DISCOVERY_VERSION,
@@ -62,6 +63,7 @@ export interface CoverageManifest {
     requests_made: number;
   };
   fetch?: FetchManifestBlock;
+  page_analysis?: PageAnalysisManifestBlock;
   link_integrity?: LinkIntegrityManifestBlock;
   urls: {
     discovered: number;
@@ -124,6 +126,7 @@ export interface BuildManifestInput {
   requestsMade: number;
   pageBudget?: number;
   fetch?: FetchManifestBlock;
+  pageAnalysis?: PageAnalysisManifestBlock;
   linkIntegrity?: LinkIntegrityManifestBlock;
 }
 
@@ -144,8 +147,9 @@ export function buildManifest(input: BuildManifestInput): CoverageManifest {
   const excluded = input.urls.filter(row => row.excludedReason !== null || !row.inScope).length;
   const selected = input.urls.filter(row => row.selected === true).length;
   const fetched = input.urls.filter(row => row.fetchState === 'fetched').length;
+  const analyzed = input.urls.filter(row => row.analysisState === 'complete').length;
   const coverage = discovered === 0 ? [] : [
-    makeCoverageRatio('analyzed_discovered', 0, discovered, `0 of ${discovered} discovered URLs analyzed`),
+    makeCoverageRatio('analyzed_discovered', analyzed, discovered, `${analyzed} of ${discovered} discovered URLs analyzed`),
   ];
   if (discovered > 0) {
     coverage.push(makeCoverageRatio('selected_of_discovered', selected, discovered, `${selected} of ${discovered} discovered URLs selected`));
@@ -167,6 +171,22 @@ export function buildManifest(input: BuildManifestInput): CoverageManifest {
       input.linkIntegrity.targets_checked,
       input.linkIntegrity.targets_selected_for_check,
       `${input.linkIntegrity.targets_checked} of ${input.linkIntegrity.targets_selected_for_check} selected link targets checked`,
+    ));
+  }
+  if (input.pageAnalysis && input.pageAnalysis.pages_fetched > 0) {
+    coverage.push(makeCoverageRatio(
+      'pages_analysis_complete_of_fetched',
+      input.pageAnalysis.pages_analysis_complete,
+      input.pageAnalysis.pages_fetched,
+      `${input.pageAnalysis.pages_analysis_complete} of ${input.pageAnalysis.pages_fetched} fetched pages analysis complete`,
+    ));
+  }
+  if (input.pageAnalysis && discovered > 0) {
+    coverage.push(makeCoverageRatio(
+      'pages_analysis_complete_of_discovered',
+      input.pageAnalysis.pages_analysis_complete,
+      discovered,
+      `${input.pageAnalysis.pages_analysis_complete} of ${discovered} discovered pages analysis complete`,
     ));
   }
 
@@ -213,6 +233,7 @@ export function buildManifest(input: BuildManifestInput): CoverageManifest {
       requests_made: input.requestsMade,
     },
     fetch: input.fetch,
+    page_analysis: input.pageAnalysis,
     link_integrity: input.linkIntegrity,
     urls: {
       discovered,
@@ -221,7 +242,7 @@ export function buildManifest(input: BuildManifestInput): CoverageManifest {
       selected,
       attempted: input.urls.filter(row => row.fetchState === 'fetched' || row.fetchState === 'redirected' || row.fetchState === 'blocked' || row.fetchState === 'failed').length,
       fetched,
-      analyzed: 0,
+      analyzed,
       skipped: input.urls.filter(row => row.fetchState === 'skipped').length,
       blocked: input.urls.filter(row => row.fetchState === 'blocked').length,
       failed: input.urls.filter(row => row.fetchState === 'failed').length,

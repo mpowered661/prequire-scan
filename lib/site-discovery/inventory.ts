@@ -4,6 +4,8 @@ export type DiscoveryMethod =
 export type FetchState =
   | 'not_attempted' | 'fetched' | 'redirected' | 'blocked' | 'failed' | 'skipped';
 
+export type AnalysisState = 'not_attempted' | 'partial' | 'complete' | 'failed';
+
 export interface InventoryUrl {
   urlRaw: string;
   urlNormalized: string | null;
@@ -16,6 +18,7 @@ export interface InventoryUrl {
   fetchState: FetchState;
   httpStatus: number | null;
   analyzed: boolean;
+  analysisState?: AnalysisState;
   firstSeenAt: string;
   selected?: boolean;
   selectionReason?: string | null;
@@ -29,7 +32,7 @@ export interface InventoryUrl {
 }
 
 export type FetchStatePatch = Partial<Pick<InventoryUrl,
-  'fetchState' | 'httpStatus' | 'analyzed' | 'skipReason' | 'redirectTargetUrl' |
+  'fetchState' | 'httpStatus' | 'analyzed' | 'analysisState' | 'skipReason' | 'redirectTargetUrl' |
   'contentSha256' | 'contentLength' | 'responseMs' | 'lastCheckedAt'
 >>;
 
@@ -68,8 +71,8 @@ export function assertInvariants(row: InventoryUrl): void {
   if (row.analyzed && row.fetchState !== 'fetched') {
     throw new Error('analyzed_requires_fetched');
   }
-  if (row.analyzed) {
-    throw new Error('tranche_b_analyzed_forbidden');
+  if (row.analyzed !== (row.analysisState === 'complete')) {
+    throw new Error('analyzed_must_derive_from_analysis_state');
   }
 }
 
@@ -87,13 +90,15 @@ export function applyTrancheBDefaults(row: InventoryUrl): InventoryUrl {
   row.contentLength ??= null;
   row.responseMs ??= null;
   row.lastCheckedAt ??= null;
-  if (row.analyzed) throw new Error('tranche_b_analyzed_forbidden');
+  row.analysisState ??= 'not_attempted';
+  row.analyzed = row.analysisState === 'complete';
   return row;
 }
 
 export function updateFetchState(row: InventoryUrl, patch: FetchStatePatch): InventoryUrl {
   applyTrancheBDefaults(row);
-  if (patch.analyzed) throw new Error('tranche_b_analyzed_forbidden');
+  if (patch.analyzed !== undefined) throw new Error('analyzed_is_derived');
+  if (patch.analysisState !== undefined) row.analysisState = patch.analysisState;
   const nextState = patch.fetchState ?? row.fetchState;
   if (row.fetchState !== 'not_attempted' && nextState !== row.fetchState) {
     throw new Error('illegal_fetch_state_transition');
@@ -110,7 +115,7 @@ export function updateFetchState(row: InventoryUrl, patch: FetchStatePatch): Inv
   if (patch.contentLength !== undefined) row.contentLength = patch.contentLength;
   if (patch.responseMs !== undefined) row.responseMs = patch.responseMs;
   if (patch.lastCheckedAt !== undefined) row.lastCheckedAt = patch.lastCheckedAt;
-  row.analyzed = false;
+  row.analyzed = row.analysisState === 'complete';
   assertInvariants(row);
   return row;
 }

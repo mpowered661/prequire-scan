@@ -23,12 +23,13 @@ describe('runScan', () => {
     vi.restoreAllMocks();
   });
 
-  it('stamps selection, fetch block, and keeps analyzed false', async () => {
+  it('stamps selection, fetch block, and derives analyzed from complete page analysis', async () => {
     mockDiscovery({ robots: { body: null, httpStatus: 404, determinable: true } });
     vi.stubGlobal('fetch', vi.fn(async () => new Response('ok', { status: 200 })));
     const result = await runScan({ seedUrl: 'https://example.com/', scanId: 'scan' });
-    expect(result.urls.every(row => row.analyzed === false)).toBe(true);
-    expect(result.manifest.urls).toMatchObject({ selected: 1, fetched: 1, analyzed: 0 });
+    expect(result.urls.every(row => row.analyzed === (row.analysisState === 'complete'))).toBe(true);
+    expect(result.manifest.urls).toMatchObject({ selected: 1, fetched: 1, analyzed: 1 });
+    expect(result.manifest.page_analysis?.pages_analysis_complete).toBe(1);
     expect(result.manifest.fetch?.stop_reason).toBe('complete');
   });
 

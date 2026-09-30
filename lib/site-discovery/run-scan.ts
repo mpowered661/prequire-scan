@@ -3,6 +3,7 @@ import { runDiscovery } from './discover';
 import { BudgetTracker, fetchSelected } from './fetcher';
 import { applyTrancheBDefaults } from './inventory';
 import { createHtmlSink, runLinkIntegrity } from './link-integrity';
+import { buildPageAnalysisManifest, createPageAnalysisSink } from './page-analysis';
 import { selectUrls } from './select';
 import type { RunScanInput, RunScanResult } from './types';
 import { DEFAULT_PAGE_BUDGET, HARD_MAX_SELECTED_PAGES } from './versions';
@@ -11,7 +12,8 @@ export async function runScan(input: RunScanInput): Promise<RunScanResult> {
   const discovery = await runDiscovery(input);
   const seed = discovery.urls.find(row => row.discoveryMethod === 'seed' && row.urlNormalized !== null);
   if (!seed?.urlNormalized || discovery.manifest.status === 'aborted') {
-    return discovery;
+    const pageAnalysis = buildPageAnalysisManifest(discovery.urls, []);
+    return { ...discovery, manifest: { ...discovery.manifest, page_analysis: pageAnalysis }, pageObservations: [] };
   }
   const scopeOrigin = new URL(seed.urlNormalized).origin;
   const pageBudget = Math.min(input.selection?.budget ?? DEFAULT_PAGE_BUDGET, HARD_MAX_SELECTED_PAGES);
@@ -27,18 +29,25 @@ export async function runScan(input: RunScanInput): Promise<RunScanResult> {
     row.selected = decision !== undefined;
     row.selectionReason = decision?.reason ?? null;
     row.selectionRank = decision?.rank ?? null;
+    row.analysisState = 'not_attempted';
     row.analyzed = false;
   }
   const tracker = new BudgetTracker(input.fetch?.maxTotalRequests, discovery.manifest.discovery.requests_made);
   const htmlSink = createHtmlSink(scopeOrigin);
+  const pageAnalysisSink = createPageAnalysisSink(input.scanId, discovery.urls);
   const fetch = await fetchSelected(discovery.urls, {
     scopeOrigin,
     robotsTxt: input.robotsTxt !== undefined ? input.robotsTxt : discovery.robots.body,
     robotsDeterminable: input.robotsDeterminable ?? discovery.robots.determinable,
     config: input.fetch ?? {},
     budgetTracker: tracker,
-    onHtml: htmlSink.onHtml,
+    onPage: artifact => {
+      pageAnalysisSink.onPage(artifact);
+      htmlSink.onPage(artifact);
+    },
   });
+  const pageObservations = pageAnalysisSink.observations();
+  const pageAnalysis = buildPageAnalysisManifest(discovery.urls, pageObservations);
   const linkIntegrity = await runLinkIntegrity(htmlSink.links(), {
     pagesSupplyingHtml: htmlSink.pages(),
     scopeOrigin,
@@ -72,8 +81,8 @@ export async function runScan(input: RunScanInput): Promise<RunScanResult> {
     requestsMade: discovery.manifest.discovery.requests_made,
     pageBudget,
     fetch,
+    pageAnalysis,
     linkIntegrity: linkIntegrity.manifest,
   });
-  for (const row of discovery.urls) row.analyzed = false;
-  return { manifest, urls: discovery.urls, links: linkIntegrity.links, linkTargets: linkIntegrity.targets };
+  return { manifest, urls: discovery.urls, links: linkIntegrity.links, linkTargets: linkIntegrity.targets, pageObservations };
 }

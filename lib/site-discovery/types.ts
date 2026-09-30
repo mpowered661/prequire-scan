@@ -49,6 +49,7 @@ export interface RunScanResult {
   urls: InventoryUrl[];
   links?: ExtractedLink[];
   linkTargets?: TargetObservation[];
+  pageObservations?: PageObservation[];
 }
 
 export type LinkPlacement = 'nav' | 'footer' | 'body' | 'unknown';
@@ -81,6 +82,40 @@ export interface TargetObservation {
   responseMs: number | null;
   sourceLinkCount: number;
   checkedAt: string | null;
+}
+
+export interface FetchedPageArtifact {
+  requestedUrl: string;
+  finalUrl: string;
+  status: number;
+  html: string;
+  contentSha256: string;
+  contentLength: number;
+  fetchedAt: string;
+}
+
+export type OnPage = (artifact: FetchedPageArtifact) => void;
+
+export type PageEngineName =
+  | 'extraction_resilience'
+  | 'structured_data'
+  | 'content_delivery'
+  | 'meta_tags';
+
+export type AnalysisState = 'not_attempted' | 'partial' | 'complete' | 'failed';
+
+export interface PageObservation {
+  scanId: string;
+  requestedUrl: string;
+  finalUrl: string;
+  engine: PageEngineName;
+  engineVersion: string;
+  contentSha256: string;
+  observation: unknown;
+  status: 'ok' | 'failed';
+  errorReason: string | null;
+  observedAt: string;
+  scope: 'page';
 }
 
 export type { CoverageManifest, DiscoveryMethod, InventoryUrl };
