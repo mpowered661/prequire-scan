@@ -1,6 +1,22 @@
 import type { DiscoveryConfig, ScanMode } from './types';
 import type { DiscoveryMethod, InventoryUrl } from './inventory';
-import { DISCOVERY_VERSION, MANIFEST_VERSION, NORMALIZATION_VERSION } from './versions';
+import {
+  DEFAULT_PAGE_BUDGET,
+  DISCOVERY_VERSION,
+  EXCLUSIONS_VERSION,
+  FETCHER_VERSION,
+  HARD_MAX_PAGE_FETCHES,
+  HARD_MAX_SELECTED_PAGES,
+  HARD_MAX_TOTAL_REQUESTS,
+  MANIFEST_VERSION,
+  MAX_CONCURRENCY,
+  MAX_RETRIES,
+  MIN_REQUEST_DELAY_MS,
+  NORMALIZATION_VERSION,
+  ROBOTS_RULES_VERSION,
+  ROLE_PATTERNS_VERSION,
+  SELECTOR_VERSION,
+} from './versions';
 
 export interface CoverageManifest {
   manifest_version: string;
@@ -15,11 +31,23 @@ export interface CoverageManifest {
   method: {
     discovery_version: string;
     normalization_version: string;
+    selector_version?: string;
+    role_patterns_version?: string;
+    exclusions_version?: string;
+    robots_rules_version?: string;
+    fetcher_version?: string;
     config: {
       max_child_sitemaps: number;
       max_sitemap_depth: number;
       max_loc_entries: number;
       max_discovery_requests: number;
+      page_budget?: number;
+      hard_max_selected_pages?: number;
+      hard_max_page_fetches?: number;
+      hard_max_total_requests?: number;
+      concurrency?: number;
+      min_request_delay_ms?: number;
+      max_retries?: number;
     };
   };
   discovery: {
@@ -32,6 +60,7 @@ export interface CoverageManifest {
     truncation_reason: string | null;
     requests_made: number;
   };
+  fetch?: FetchManifestBlock;
   urls: {
     discovered: number;
     in_scope: number;
@@ -54,6 +83,24 @@ export interface CoverageRatio {
   label: string;
 }
 
+export interface FetchManifestBlock {
+  attempted: number;
+  fetched: number;
+  redirected_not_followed: number;
+  skipped_robots: number;
+  skipped_excluded: number;
+  skipped_not_selected: number;
+  blocked: number;
+  failed: number;
+  retries_used: number;
+  page_requests_made: number;
+  total_requests_made: number;
+  robots_determinable: boolean;
+  stop_reason: null | 'complete' | 'page_budget' | 'page_fetch_ceiling'
+    | 'total_request_ceiling' | 'rate_limited'
+    | 'robots_undeterminable' | 'crawl_delay_too_large';
+}
+
 export interface BuildManifestInput {
   scanId: string;
   scanMode: ScanMode;
@@ -73,6 +120,8 @@ export interface BuildManifestInput {
   discoveryComplete: boolean;
   truncationReason: string | null;
   requestsMade: number;
+  pageBudget?: number;
+  fetch?: FetchManifestBlock;
 }
 
 export function makeCoverageRatio(key: string, numerator: number, denominator: number, label: string): CoverageRatio {
@@ -89,10 +138,18 @@ export function buildManifest(input: BuildManifestInput): CoverageManifest {
   }
   const discovered = input.urls.length;
   const inScope = input.urls.filter(row => row.inScope).length;
-  const excluded = discovered - inScope;
+  const excluded = input.urls.filter(row => row.excludedReason !== null || !row.inScope).length;
+  const selected = input.urls.filter(row => row.selected === true).length;
+  const fetched = input.urls.filter(row => row.fetchState === 'fetched').length;
   const coverage = discovered === 0 ? [] : [
     makeCoverageRatio('analyzed_discovered', 0, discovered, `0 of ${discovered} discovered URLs analyzed`),
   ];
+  if (discovered > 0) {
+    coverage.push(makeCoverageRatio('selected_of_discovered', selected, discovered, `${selected} of ${discovered} discovered URLs selected`));
+  }
+  if (selected > 0) {
+    coverage.push(makeCoverageRatio('fetched_of_selected', fetched, selected, `${fetched} of ${selected} selected URLs fetched`));
+  }
 
   return {
     manifest_version: MANIFEST_VERSION,
@@ -107,11 +164,23 @@ export function buildManifest(input: BuildManifestInput): CoverageManifest {
     method: {
       discovery_version: DISCOVERY_VERSION,
       normalization_version: NORMALIZATION_VERSION,
+      selector_version: SELECTOR_VERSION,
+      role_patterns_version: ROLE_PATTERNS_VERSION,
+      exclusions_version: EXCLUSIONS_VERSION,
+      robots_rules_version: ROBOTS_RULES_VERSION,
+      fetcher_version: FETCHER_VERSION,
       config: {
         max_child_sitemaps: input.config.maxChildSitemaps,
         max_sitemap_depth: input.config.maxSitemapDepth,
         max_loc_entries: input.config.maxLocEntries,
         max_discovery_requests: input.config.maxDiscoveryRequests,
+        page_budget: Math.min(input.pageBudget ?? DEFAULT_PAGE_BUDGET, HARD_MAX_SELECTED_PAGES),
+        hard_max_selected_pages: HARD_MAX_SELECTED_PAGES,
+        hard_max_page_fetches: HARD_MAX_PAGE_FETCHES,
+        hard_max_total_requests: HARD_MAX_TOTAL_REQUESTS,
+        concurrency: MAX_CONCURRENCY,
+        min_request_delay_ms: MIN_REQUEST_DELAY_MS,
+        max_retries: MAX_RETRIES,
       },
     },
     discovery: {
@@ -124,17 +193,18 @@ export function buildManifest(input: BuildManifestInput): CoverageManifest {
       truncation_reason: input.truncationReason,
       requests_made: input.requestsMade,
     },
+    fetch: input.fetch,
     urls: {
       discovered,
       in_scope: inScope,
       excluded,
-      selected: 0,
-      attempted: 0,
-      fetched: 0,
+      selected,
+      attempted: input.urls.filter(row => row.fetchState === 'fetched' || row.fetchState === 'redirected' || row.fetchState === 'blocked' || row.fetchState === 'failed').length,
+      fetched,
       analyzed: 0,
-      skipped: 0,
-      blocked: 0,
-      failed: 0,
+      skipped: input.urls.filter(row => row.fetchState === 'skipped').length,
+      blocked: input.urls.filter(row => row.fetchState === 'blocked').length,
+      failed: input.urls.filter(row => row.fetchState === 'failed').length,
     },
     coverage,
   };

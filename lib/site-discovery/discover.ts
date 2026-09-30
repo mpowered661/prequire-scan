@@ -39,6 +39,10 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryR
   let requestsMade = 0;
   let sitemapsFound = 0;
   let sitemapsParsed = 0;
+  // True once normal discovery has produced USABLE sitemap discovery: a sitemap
+  // document parsed successfully, or a sitemap URL queued. A valid <urlset>
+  // queues nothing, so an empty queue alone must never imply discovery failed.
+  let discoveryYieldedSitemap = false;
   let sitemapsSkippedCrossOrigin = 0;
   let sitemapEntriesSeen = 0;
   let childSitemapsQueued = 0;
@@ -68,7 +72,7 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryR
       truncationReason: null,
       requestsMade: 0,
     });
-    return { manifest, urls: [] };
+    return { manifest, urls: [], robots: { body: null, httpStatus: null, determinable: false } };
   }
 
   const seed = new URL(validated.url);
@@ -136,6 +140,7 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryR
     if (skipCrossOriginSitemap(url)) return;
     queuedSitemaps.push({ url, method, depth, discoveredFrom });
     sitemapsFound += 1;
+    discoveryYieldedSitemap = true;
   };
   const fetchWithBudget = async (url: string, requiredOrigin?: string): Promise<FetchOutcome> => {
     return discoveryFetch(url, {
@@ -162,6 +167,7 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryR
 
   const robotsUrl = new URL('/robots.txt', scopeOrigin).toString();
   const robots = await fetchWithBudget(robotsUrl);
+  const robotsObservation = observeRobots(robots);
   if (robots.ok && robots.status === 200 && robots.body !== null) {
     for (const directive of extractSitemapDirectives(robots.body)) {
       queueSitemap(directive, 'robots_sitemap', 0, robotsUrl);
@@ -178,7 +184,7 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryR
     }
   }
 
-  if (queuedSitemaps.length === 0 && requestsMade < config.maxDiscoveryRequests) {
+  if (!discoveryYieldedSitemap && requestsMade < config.maxDiscoveryRequests) {
     for (const path of ['/wp-sitemap.xml', '/sitemap_index.xml']) {
       const probeUrl = new URL(path, scopeOrigin).toString();
       const probe = await fetchSitemapWithBudget(probeUrl);
@@ -221,7 +227,7 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryR
     truncationReason,
     requestsMade,
   });
-  return { manifest, urls };
+  return { manifest, urls, robots: robotsObservation };
 
   function processSitemapBody(body: string, sourceUrl: string, method: DiscoveryMethod, depth: number, discoveredFrom: string | null): void {
     const parsed = parseSitemap(body, sourceUrl, config.maxLocEntries);
@@ -230,6 +236,7 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryR
       return;
     }
     sitemapsParsed += 1;
+    discoveryYieldedSitemap = true;
     sitemapEntriesSeen += parsed.locs.length;
     if (parsed.truncated) setTruncated('max_loc_entries');
     if (parsed.kind === 'index') {
@@ -253,6 +260,18 @@ export async function runDiscovery(input: RunDiscoveryInput): Promise<DiscoveryR
       addUrl(loc, method === 'robots_sitemap' ? 'sitemap' : method, discoveredFrom, sourceUrl, null);
     }
   }
+}
+
+function observeRobots(outcome: FetchOutcome): DiscoveryResult['robots'] {
+  return {
+    body: outcome.body,
+    httpStatus: outcome.status,
+    determinable: outcome.status === 404 || (outcome.ok && outcome.status === 200 && outcome.body !== null && !looksHtml(outcome.body)),
+  };
+}
+
+function looksHtml(value: string): boolean {
+  return /<!doctype html|<html[\s>]/i.test(value);
 }
 
 function clampConfig(config: Partial<DiscoveryConfig> | undefined): DiscoveryConfig {

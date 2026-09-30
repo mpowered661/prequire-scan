@@ -330,3 +330,64 @@ function walk(dir: string): string[] {
     return entry.isFile() ? [full] : [];
   });
 }
+
+// ── Finding 3 regression (Tranche B review) ───────────────────────────────────
+// The WordPress fallback was gated on `queuedSitemaps.length === 0`. A valid
+// <urlset> contributes URLs but queues nothing, so the fallback fired even when
+// normal discovery had already succeeded, costing two needless requests against
+// every site with a working sitemap. The gate must express USABLE discovery.
+describe('fallback sitemap probing (Finding 3)', () => {
+  const FALLBACK = /wp-sitemap\.xml|sitemap_index\.xml/;
+
+  it('does not probe fallback conventions after a valid urlset', async () => {
+    const calls = installFetch({
+      'https://example.com/robots.txt': response('', 404),
+      'https://example.com/sitemap.xml': response(
+        urlset(['https://example.com/a', 'https://example.com/b']),
+      ),
+    });
+    const { urls } = await runDiscovery({ seedUrl: 'https://example.com/', scanId: 'f3-a' });
+    expect(calls.filter(url => FALLBACK.test(url))).toHaveLength(0);
+    // discovered URLs are still retained
+    expect(urls.filter(row => row.urlNormalized?.match(/\/(a|b)$/))).toHaveLength(2);
+  });
+
+  it('does not probe fallback conventions after a robots Sitemap directive', async () => {
+    const calls = installFetch({
+      'https://example.com/robots.txt': response('Sitemap: https://example.com/custom.xml\n'),
+      'https://example.com/custom.xml': response(urlset(['https://example.com/a'])),
+    });
+    await runDiscovery({ seedUrl: 'https://example.com/', scanId: 'f3-c' });
+    expect(calls.filter(url => FALLBACK.test(url))).toHaveLength(0);
+  });
+
+  it('does not probe fallback conventions after a valid sitemap index', async () => {
+    const calls = installFetch({
+      'https://example.com/robots.txt': response('', 404),
+      'https://example.com/sitemap.xml': response(index(['https://example.com/child.xml'])),
+      'https://example.com/child.xml': response(urlset(['https://example.com/a'])),
+    });
+    await runDiscovery({ seedUrl: 'https://example.com/', scanId: 'f3-b' });
+    expect(calls.filter(url => FALLBACK.test(url))).toHaveLength(0);
+  });
+
+  it('still probes fallback conventions when normal discovery yields nothing', async () => {
+    const calls = installFetch({
+      'https://example.com/robots.txt': response('', 404),
+      'https://example.com/sitemap.xml': response('', 404),
+      'https://example.com/wp-sitemap.xml': response(urlset(['https://example.com/a'])),
+    });
+    await runDiscovery({ seedUrl: 'https://example.com/', scanId: 'f3-d' });
+    expect(calls.filter(url => FALLBACK.test(url)).length).toBeGreaterThan(0);
+  });
+
+  it('still probes fallback conventions when the sitemap is malformed', async () => {
+    const calls = installFetch({
+      'https://example.com/robots.txt': response('', 404),
+      'https://example.com/sitemap.xml': response('<html><body>nope</body></html>'),
+      'https://example.com/wp-sitemap.xml': response(urlset(['https://example.com/a'])),
+    });
+    await runDiscovery({ seedUrl: 'https://example.com/', scanId: 'f3-e' });
+    expect(calls.filter(url => FALLBACK.test(url)).length).toBeGreaterThan(0);
+  });
+});

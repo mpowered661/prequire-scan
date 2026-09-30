@@ -20,6 +20,32 @@ export interface RunDiscoveryInput {
 export interface DiscoveryResult {
   manifest: CoverageManifest;
   urls: InventoryUrl[];
+  robots: {
+    body: string | null;
+    httpStatus: number | null;
+    determinable: boolean;
+  };
+}
+
+export interface SelectionConfig {
+  budget?: number;
+  navUrls?: string[];
+}
+
+export interface FetchConfig {
+  maxTotalRequests?: number;
+}
+
+export interface RunScanInput extends RunDiscoveryInput {
+  selection?: SelectionConfig;
+  fetch?: FetchConfig;
+  robotsTxt?: string | null;
+  robotsDeterminable?: boolean;
+}
+
+export interface RunScanResult {
+  manifest: CoverageManifest;
+  urls: InventoryUrl[];
 }
 
 export type { CoverageManifest, DiscoveryMethod, InventoryUrl };
