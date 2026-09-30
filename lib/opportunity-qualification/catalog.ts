@@ -142,6 +142,40 @@ export const CATALOG: Readonly<Record<string, CatalogEntry>> = Object.freeze({
     plainLanguage: true,
     label: 'structured data that could not be parsed',
   }),
+  // Healthy extraction-resilience bands. Catalogued explicitly so that a known
+  // healthy state fails G9 ("nothing to remediate") rather than falling through
+  // to UNKNOWN and failing G8 ("no claim template"), which misreported a healthy
+  // page as a template coverage gap in the human-visible gate trace.
+  'extraction_band:mostly_resilient': Object.freeze({
+    remediationClass: null,
+    requiredCapability: null,
+    verificationMethod: null,
+    requiresImpactInference: false,
+    misleadingWithoutContext: false,
+    requiredContext: null,
+    // A band is a composite engine verdict with no showable instance, exactly as
+    // for 'fragile'. Demonstrability describes the EVIDENCE, not the polarity, so
+    // a healthy band is no more reproducible by a third party than an adverse one.
+    independentlyReproducible: false,
+    presentationReason: 'healthy state; no adverse condition to demonstrate',
+    plainLanguage: true,
+    label: 'a mostly resilient extraction-resilience band',
+  }),
+  'extraction_band:resilient': Object.freeze({
+    remediationClass: null,
+    requiredCapability: null,
+    verificationMethod: null,
+    requiresImpactInference: false,
+    misleadingWithoutContext: false,
+    requiredContext: null,
+    // A band is a composite engine verdict with no showable instance, exactly as
+    // for 'fragile'. Demonstrability describes the EVIDENCE, not the polarity, so
+    // a healthy band is no more reproducible by a third party than an adverse one.
+    independentlyReproducible: false,
+    presentationReason: 'healthy state; no adverse condition to demonstrate',
+    plainLanguage: true,
+    label: 'a resilient extraction-resilience band',
+  }),
   // A healthy state. There is nothing to remediate and nothing to verify, so it
   // can never become an adverse opportunity.
   'structured_data_presence:structured_data_present': Object.freeze({

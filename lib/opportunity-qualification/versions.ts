@@ -1,6 +1,6 @@
 // Opportunity Qualification v0.1 — frozen versions and registries.
 
-export const QUALIFICATION_VERSION = 'oq-0.1';
+export const QUALIFICATION_VERSION = 'oq-0.1.1';
 
 /** Detector ids and their versions. An unknown detector fails closed. */
 export const DETECTORS = Object.freeze({
