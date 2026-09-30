@@ -1,5 +1,6 @@
 import type { DiscoveryConfig, ScanMode } from './types';
 import type { DiscoveryMethod, InventoryUrl } from './inventory';
+import type { LinkIntegrityManifestBlock } from './link-integrity';
 import {
   DEFAULT_PAGE_BUDGET,
   DISCOVERY_VERSION,
@@ -61,6 +62,7 @@ export interface CoverageManifest {
     requests_made: number;
   };
   fetch?: FetchManifestBlock;
+  link_integrity?: LinkIntegrityManifestBlock;
   urls: {
     discovered: number;
     in_scope: number;
@@ -122,6 +124,7 @@ export interface BuildManifestInput {
   requestsMade: number;
   pageBudget?: number;
   fetch?: FetchManifestBlock;
+  linkIntegrity?: LinkIntegrityManifestBlock;
 }
 
 export function makeCoverageRatio(key: string, numerator: number, denominator: number, label: string): CoverageRatio {
@@ -149,6 +152,22 @@ export function buildManifest(input: BuildManifestInput): CoverageManifest {
   }
   if (selected > 0) {
     coverage.push(makeCoverageRatio('fetched_of_selected', fetched, selected, `${fetched} of ${selected} selected URLs fetched`));
+  }
+  if (input.linkIntegrity && input.linkIntegrity.unique_internal_targets > 0) {
+    coverage.push(makeCoverageRatio(
+      'targets_checked_of_unique_internal',
+      input.linkIntegrity.targets_checked,
+      input.linkIntegrity.unique_internal_targets,
+      `${input.linkIntegrity.targets_checked} of ${input.linkIntegrity.unique_internal_targets} unique internal link targets checked`,
+    ));
+  }
+  if (input.linkIntegrity && input.linkIntegrity.targets_selected_for_check > 0) {
+    coverage.push(makeCoverageRatio(
+      'targets_checked_of_selected',
+      input.linkIntegrity.targets_checked,
+      input.linkIntegrity.targets_selected_for_check,
+      `${input.linkIntegrity.targets_checked} of ${input.linkIntegrity.targets_selected_for_check} selected link targets checked`,
+    ));
   }
 
   return {
@@ -194,6 +213,7 @@ export function buildManifest(input: BuildManifestInput): CoverageManifest {
       requests_made: input.requestsMade,
     },
     fetch: input.fetch,
+    link_integrity: input.linkIntegrity,
     urls: {
       discovered,
       in_scope: inScope,

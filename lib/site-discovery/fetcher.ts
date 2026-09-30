@@ -60,6 +60,7 @@ export async function fetchSelected(
     robotsDeterminable: boolean;
     config: FetchConfig;
     budgetTracker: BudgetTracker;
+    onHtml?: (sourceUrl: string, html: string) => void;
   },
 ): Promise<FetchOutcomeSummary> {
   let pageRequests = 0;
@@ -100,7 +101,7 @@ export async function fetchSelected(
       stopReason = 'page_fetch_ceiling';
       break;
     }
-    const outcome = await fetchOne(row.urlNormalized!, opts.scopeOrigin, opts.budgetTracker, () => pageRequests++, () => retriesUsed++);
+    const outcome = await fetchOne(row.urlNormalized!, opts.scopeOrigin, opts.budgetTracker, () => pageRequests++, () => retriesUsed++, opts.onHtml);
     applyOutcome(row, outcome);
     if (outcome.reason === 'total_request_ceiling') {
       stopReason = 'total_request_ceiling';
@@ -141,10 +142,11 @@ async function fetchOne(
   budget: BudgetTracker,
   recordPageRequest: () => void,
   recordRetry: () => void,
+  onHtml?: (sourceUrl: string, html: string) => void,
 ): Promise<FetchOneOutcome> {
   let attempt = 0;
   for (;;) {
-    const outcome = await fetchAttempt(startUrl, scopeOrigin, budget, recordPageRequest);
+    const outcome = await fetchAttempt(startUrl, scopeOrigin, budget, recordPageRequest, onHtml);
     if ((outcome.reason === 'timeout' || outcome.reason === 'http_5xx') && attempt < MAX_RETRIES) {
       attempt += 1;
       recordRetry();
@@ -154,7 +156,13 @@ async function fetchOne(
   }
 }
 
-async function fetchAttempt(url: string, scopeOrigin: string, budget: BudgetTracker, recordPageRequest: () => void): Promise<FetchOneOutcome> {
+async function fetchAttempt(
+  url: string,
+  scopeOrigin: string,
+  budget: BudgetTracker,
+  recordPageRequest: () => void,
+  onHtml?: (sourceUrl: string, html: string) => void,
+): Promise<FetchOneOutcome> {
   let nextUrl = url;
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
     const validated = await validateUrl(nextUrl);
@@ -185,6 +193,7 @@ async function fetchAttempt(url: string, scopeOrigin: string, budget: BudgetTrac
       if (response.status >= 500) return { state: 'failed', reason: 'http_5xx', status: response.status, responseMs };
       const body = await readCappedBody(response);
       if (!body.ok) return { state: 'failed', reason: 'oversize', status: response.status, responseMs };
+      if (onHtml) onHtml(validated.url, new TextDecoder().decode(body.bytes));
       return {
         state: 'fetched',
         reason: null,

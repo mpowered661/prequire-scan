@@ -33,3 +33,13 @@ export const MAX_RETRIES = 1;
 export const RETRY_BACKOFF_MS = 2000;
 export const PAGE_FETCH_TIMEOUT_MS = 15000;
 export const MAX_PAGE_BYTES = 2 * 1024 * 1024;
+
+// Tranche C: link integrity
+export const LINK_EXTRACT_VERSION = 'linkx-0.1';
+export const TARGET_CHECK_VERSION = 'tcheck-0.1';
+export const LINK_INTEGRITY_VERSION = 'li-0.1';
+export const DEFAULT_TARGET_CHECK_BUDGET = 40;
+export const HARD_MAX_TARGET_CHECKS = 40;
+export const MAX_LINKS_PER_PAGE = 500;
+export const MAX_ANCHOR_TEXT_CHARS = 200;
+export const MAX_HREF_CHARS = 2048;

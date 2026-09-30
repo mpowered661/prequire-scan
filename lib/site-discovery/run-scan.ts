@@ -2,6 +2,7 @@ import { buildManifest } from './coverage-manifest';
 import { runDiscovery } from './discover';
 import { BudgetTracker, fetchSelected } from './fetcher';
 import { applyTrancheBDefaults } from './inventory';
+import { createHtmlSink, runLinkIntegrity } from './link-integrity';
 import { selectUrls } from './select';
 import type { RunScanInput, RunScanResult } from './types';
 import { DEFAULT_PAGE_BUDGET, HARD_MAX_SELECTED_PAGES } from './versions';
@@ -29,12 +30,21 @@ export async function runScan(input: RunScanInput): Promise<RunScanResult> {
     row.analyzed = false;
   }
   const tracker = new BudgetTracker(input.fetch?.maxTotalRequests, discovery.manifest.discovery.requests_made);
+  const htmlSink = createHtmlSink(scopeOrigin);
   const fetch = await fetchSelected(discovery.urls, {
     scopeOrigin,
     robotsTxt: input.robotsTxt !== undefined ? input.robotsTxt : discovery.robots.body,
     robotsDeterminable: input.robotsDeterminable ?? discovery.robots.determinable,
     config: input.fetch ?? {},
     budgetTracker: tracker,
+    onHtml: htmlSink.onHtml,
+  });
+  const linkIntegrity = await runLinkIntegrity(htmlSink.links(), {
+    pagesSupplyingHtml: htmlSink.pages(),
+    scopeOrigin,
+    robotsTxt: input.robotsTxt !== undefined ? input.robotsTxt : discovery.robots.body,
+    budgetTracker: tracker,
+    targetCheckBudget: input.fetch?.targetCheckBudget,
   });
   const manifest = buildManifest({
     scanId: input.scanId,
@@ -62,7 +72,8 @@ export async function runScan(input: RunScanInput): Promise<RunScanResult> {
     requestsMade: discovery.manifest.discovery.requests_made,
     pageBudget,
     fetch,
+    linkIntegrity: linkIntegrity.manifest,
   });
   for (const row of discovery.urls) row.analyzed = false;
-  return { manifest, urls: discovery.urls };
+  return { manifest, urls: discovery.urls, links: linkIntegrity.links, linkTargets: linkIntegrity.targets };
 }
