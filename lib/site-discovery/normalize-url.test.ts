@@ -51,7 +51,7 @@ describe('normalizeUrl', () => {
     ['https://example.com/x?sp=a%20b', 'https://example.com/x?sp=a+b'],
     ['/rel?b=2&a=1', 'https://example.com/rel?a=1&b=2', 'https://example.com/base'],
     ['../up', 'https://example.com/up', 'https://example.com/a/b'],
-  ])('normalizes %s', (raw, expected, base) => {
+  ])('normalizes %s', (raw, expected, base?: string) => {
     expect(ok(raw, base)).toBe(expected);
   });
 
