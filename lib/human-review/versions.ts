@@ -1,16 +1,31 @@
 // Human Review & Approval v0.1 — frozen versions, vocabularies and bounds.
 
 /**
- * hra-0.1.1 is a CONFORMANCE REPAIR of hra-0.1. The frozen architecture is
- * unchanged; three implementation defects were corrected.
+ * hra-0.1.2 amends REVOCATION DERIVATION only.
  *
- * review_packet_hash VALUES CHANGE in this version, because the canonical
- * pre-hash encoding moved from unescaped delimiter concatenation to structural
- * canonical JSON. A decision recorded under hra-0.1 therefore fails closed
- * here: `validateReviewDecision` rejects it with `hra_version_mismatch` rather
- * than comparing it against a differently-derived hash.
+ * Frozen semantic: REVOKING THE CURRENT APPROVAL DE-AUTHORIZES THAT EXACT
+ * PRESENTATION BINDING, where a binding is the tuple
+ *   (opportunityKey, evidenceFingerprint, claimHash, reviewPacketHash).
+ * Under hra-0.1.1 a REVOKE removed only the decision it named, so an older
+ * approval of the identical binding silently became current again. It no
+ * longer can.
+ *
+ * Revocation stays BINDING-SCOPED, so it cannot poison future evidence: a new
+ * ReviewPacket has a different fingerprint and packet hash, hence a different
+ * binding, and a later human APPROVE_PRESENTATION for it becomes current
+ * normally.
+ *
+ * Historical decisions remain immutable, attributable and append-only. There is
+ * still no mutable approval state and no approved flag: current authorization
+ * is derived on every call.
+ *
+ * review_packet_hash CANONICALIZATION IS UNCHANGED from hra-0.1.1, and
+ * hraVersion is not one of the thirteen packet identity inputs, so packet
+ * hashes are expected to be byte-identical. The hra-0.1.1 delimiter-collision
+ * repair is untouched. A decision recorded under an earlier hra version still
+ * fails closed with hra_version_mismatch.
  */
-export const HRA_VERSION = 'hra-0.1.1';
+export const HRA_VERSION = 'hra-0.1.2';
 
 /** The only approval capability in v0.1. */
 export const PRESENTATION_APPROVE_CAPABILITY = 'presentation.approve';

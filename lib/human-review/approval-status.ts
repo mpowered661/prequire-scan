@@ -7,6 +7,7 @@
 // `approveIfEligible()`. A ReviewDecision must be SUPPLIED.
 
 import { compareBinding } from './binding';
+import { reviewPacketHash } from './packet-hash';
 import { recordsRequiredCapability } from './future-identity';
 import { reviewerIdentityValue } from './future-identity';
 import {
@@ -168,6 +169,18 @@ function sameBindingTuple(a: ReviewDecisionRecord, b: ReviewDecisionRecord): boo
     && a.reviewPacketHash === b.reviewPacketHash;
 }
 
+/**
+ * Whether a decision's four binding fields are exactly this packet's. This is
+ * the tuple comparison only — `compareBinding` additionally judges contract
+ * versions and current packet state.
+ */
+function bindsPacketTuple(d: ReviewDecisionRecord, packet: ReviewPacketView, packetHash: string): boolean {
+  return d.opportunityKey === packet.opportunityKey
+    && d.evidenceFingerprint === packet.evidenceFingerprint
+    && d.claimHash === packet.claimHash
+    && d.reviewPacketHash === packetHash;
+}
+
 interface RevocationResolution {
   /** revoked decision id -> the id of the REVOKE that revoked it. */
   revokedBy: Map<string, string>;
@@ -178,11 +191,17 @@ interface RevocationResolution {
 /**
  * Resolves which decisions a history's REVOKEs actually revoke.
  *
- * FROZEN SEMANTICS: REVOKED means an explicit LATER human REVOKE. A REVOKE
- * therefore applies to exactly the decision it NAMES, and only when that
- * decision exists in the considered history and is strictly EARLIER in the
- * deterministic order. It does not apply to decisions made after it, and it
- * does not apply to decisions it did not name.
+ * FROZEN SEMANTICS (hra-0.1.2): REVOKED means an explicit LATER human REVOKE,
+ * and revoking DE-AUTHORIZES THE EXACT PRESENTATION BINDING rather than only
+ * the one decision named. A REVOKE is well formed only when the decision it
+ * NAMES exists in the considered history and is strictly EARLIER in the
+ * deterministic order; it then revokes every non-REVOKE decision at or before
+ * it that shares the named decision's exact binding tuple.
+ *
+ * That is what stops an older approval of the identical binding from silently
+ * becoming current again. It stays binding-scoped, so it does not reach a
+ * different evidence generation, and it does not reach decisions made AFTER the
+ * revoke — a later human APPROVE_PRESENTATION is a new deliberate act.
  *
  * Anything else — no target, a target outside the considered history, a target
  * at or after the revoke, a self-target, or a target that is itself a REVOKE —
@@ -218,7 +237,19 @@ function resolveRevocations(ordered: readonly ReviewDecisionRecord[]): Revocatio
       malformed.push({ revokeId: d.reviewDecisionId, detail: `names ${target}, which is itself a REVOKE` });
       return;
     }
-    revokedBy.set(target, d.reviewDecisionId);
+
+    // De-authorize the whole binding, not just the named decision: every
+    // standing decision at or before this revoke that shares the named
+    // decision's exact binding tuple.
+    const named = ordered[ti];
+    for (let j = 0; j <= i; j += 1) {
+      const candidate = ordered[j];
+      if (candidate.decisionType === 'REVOKE') continue;
+      if (!sameBindingTuple(candidate, named)) continue;
+      if (!revokedBy.has(candidate.reviewDecisionId)) {
+        revokedBy.set(candidate.reviewDecisionId, d.reviewDecisionId);
+      }
+    }
   });
 
   return { revokedBy, malformed };
@@ -265,6 +296,27 @@ export function deriveDecisionStatus(
 
   // Decisions that still stand: not themselves revocations, and not revoked.
   const standing = relevant.filter(d => d.decisionType !== 'REVOKE' && !revokedBy.has(d.reviewDecisionId));
+
+  // THIS EXACT BINDING was de-authorized by an explicit REVOKE, and nothing
+  // standing re-authorizes it. Reported as REVOKED rather than STALE so the
+  // human revocation remains the visible reason, and so an older approval of
+  // the same binding can never be read as current.
+  const packetHash = reviewPacketHash(packet);
+  const revokedOnThisBinding = relevant.filter(
+    d => revokedBy.has(d.reviewDecisionId) && bindsPacketTuple(d, packet, packetHash));
+  const standsOnThisBinding = standing.some(d => bindsPacketTuple(d, packet, packetHash));
+  if (revokedOnThisBinding.length > 0 && !standsOnThisBinding) {
+    const newest = revokedOnThisBinding[revokedOnThisBinding.length - 1];
+    const revokingId = revokedBy.get(newest.reviewDecisionId)!;
+    return {
+      status: 'REVOKED',
+      decisionId: revokingId,
+      reason: `this exact presentation binding was de-authorized by ${revokingId}`
+        + `; revoked decisions on it: ${revokedOnThisBinding.map(d => d.reviewDecisionId).join(', ')}`,
+      consideredDecisionIds,
+    };
+  }
+
   if (standing.length === 0) {
     const revocations = relevant.filter(d => d.decisionType === 'REVOKE');
     const newest = revocations[revocations.length - 1];

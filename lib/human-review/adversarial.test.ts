@@ -739,17 +739,29 @@ describe('repair 1 — REVOKE ordering and targeting', () => {
 });
 
 describe('repair 1 — targeting precision and fail-closed ambiguity', () => {
-  it('96 explicit revokesReviewDecisionId targeting is honoured per decision', () => {
+  // hra-0.1.2: revoking DE-AUTHORIZES THE EXACT BINDING. Under hra-0.1.1 this
+  // test asserted a fallback to the other same-binding approval, which is the
+  // behaviour the frozen semantic now forbids.
+  it('96 revoking either same-binding approval de-authorizes the whole binding', () => {
     const a1 = approval(ABOUT, { reviewDecisionId: 'D-1', requestId: 'R-1', decisionTimestamp: T('08:00') });
     const a2 = approval(ABOUT, { reviewDecisionId: 'D-2', requestId: 'R-2', decisionTimestamp: T('09:00') });
+    expect(a1.reviewPacketHash).toBe(a2.reviewPacketHash);
+
     const r1 = revoke('D-1', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('10:00') });
-    const keepLater = deriveDecisionStatus([a1, a2, r1], ABOUT);
-    expect(keepLater.status).toBe('APPROVED_CURRENT');
-    expect(keepLater.decisionId).toBe('D-2');
+    const naming1 = deriveDecisionStatus([a1, a2, r1], ABOUT);
+    expect(naming1.status).toBe('REVOKED');
+    expect(naming1.decisionId).toBe('D-R');
+
     const r2 = revoke('D-2', { reviewDecisionId: 'D-R2', requestId: 'R-R2', decisionTimestamp: T('11:00') });
-    const keepEarlier = deriveDecisionStatus([a1, a2, r2], ABOUT);
-    expect(keepEarlier.status).toBe('APPROVED_CURRENT');
-    expect(keepEarlier.decisionId).toBe('D-1');
+    const naming2 = deriveDecisionStatus([a1, a2, r2], ABOUT);
+    expect(naming2.status).toBe('REVOKED');
+    expect(naming2.decisionId).toBe('D-R2');
+
+    // neither surviving approval can carry a snapshot for the revoked binding
+    expect(snap(ABOUT, a1, [a1, a2, r1]).snapshot).toBeNull();
+    expect(snap(ABOUT, a2, [a1, a2, r1]).snapshot).toBeNull();
+    expect(snap(ABOUT, a1, [a1, a2, r2]).snapshot).toBeNull();
+    expect(snap(ABOUT, a2, [a1, a2, r2]).snapshot).toBeNull();
   });
 
   it('97 when every decision is revoked the status is REVOKED and no snapshot derives', () => {
@@ -903,9 +915,9 @@ describe('repair 3 — packet hash canonicalization, exact Codex collision class
     expect(reviewPacketHash({ ...ABOUT, claimHash: 'different' })).not.toBe(reviewPacketHash(ABOUT));
   });
 
-  it('108 the hash change is bound to hra-0.1.1 and old decisions fail closed', () => {
-    expect(HRA_VERSION).toBe('hra-0.1.1');
-    const old = approval(ABOUT, { hraVersion: 'hra-0.1' });
+  it('108 the hash encoding stays bound to its version and old decisions fail closed', () => {
+    expect(HRA_VERSION).toBe('hra-0.1.2');
+    const old = approval(ABOUT, { hraVersion: 'hra-0.1.1' });
     const v = validateReviewDecision(old);
     expect(v.valid).toBe(false);
     expect(v.failures.map(f => f.code)).toContain('hra_version_mismatch');
@@ -1053,5 +1065,200 @@ describe('hardening — snapshot immutability of approved truth', () => {
     const packet = detached();
     (packet as unknown as Record<string, unknown>).canonicalClaim = new Map([['a', 1]]);
     expect(() => snap(packet, approval(packet))).toThrow(/not a plain JSON-shaped object/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// hra-0.1.2 REVOCATION SEMANTIC — adversarial cases 119-130.
+// Frozen: revoking the current approval de-authorizes that EXACT
+// presentation binding. An older approval of the same binding must never
+// silently become current again; a new binding stays independently approvable.
+// ═══════════════════════════════════════════════════════════════
+
+describe('hra-0.1.2 revocation — no same-binding fallback', () => {
+  it('119 case 1: APPROVE A1, APPROVE A2, REVOKE A2 de-authorizes the binding', () => {
+    const a1 = approval(ABOUT, { reviewDecisionId: 'D-A1', requestId: 'R-1', decisionTimestamp: T('08:00') });
+    const a2 = approval(ABOUT, { reviewDecisionId: 'D-A2', requestId: 'R-2', decisionTimestamp: T('09:00') });
+    const r = revoke('D-A2', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('10:00') });
+    expect(a1.reviewPacketHash).toBe(a2.reviewPacketHash);
+    const status = deriveDecisionStatus([a1, a2, r], ABOUT);
+    expect(status.status).toBe('REVOKED');
+    expect(status.status).not.toBe('APPROVED_CURRENT');
+    expect(status.decisionId).toBe('D-R');
+    expect(status.consideredDecisionIds).toEqual(['D-A1', 'D-A2', 'D-R']);
+  });
+
+  it('120 case 1: neither A1 nor A2 can derive a snapshot for the revoked binding', () => {
+    const a1 = approval(ABOUT, { reviewDecisionId: 'D-A1', requestId: 'R-1', decisionTimestamp: T('08:00') });
+    const a2 = approval(ABOUT, { reviewDecisionId: 'D-A2', requestId: 'R-2', decisionTimestamp: T('09:00') });
+    const r = revoke('D-A2', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('10:00') });
+    const all = [a1, a2, r];
+    for (const d of [a1, a2]) {
+      const out = snap(ABOUT, d, all);
+      expect(out.snapshot, d.reviewDecisionId).toBeNull();
+      expect(out.failures.map(f => f.code), d.reviewDecisionId).toContain('decision_not_current');
+    }
+  });
+
+  it('121 case 2: three same-binding approvals, revoke the latest, no fallback at all', () => {
+    const a1 = approval(ABOUT, { reviewDecisionId: 'D-A1', requestId: 'R-1', decisionTimestamp: T('08:00') });
+    const a2 = approval(ABOUT, { reviewDecisionId: 'D-A2', requestId: 'R-2', decisionTimestamp: T('09:00') });
+    const a3 = approval(ABOUT, { reviewDecisionId: 'D-A3', requestId: 'R-3', decisionTimestamp: T('10:00') });
+    const r = revoke('D-A3', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('11:00') });
+    const status = deriveDecisionStatus([a1, a2, a3, r], ABOUT);
+    expect(status.status).toBe('REVOKED');
+    expect(status.decisionId).toBe('D-R');
+    for (const d of [a1, a2, a3]) expect(snap(ABOUT, d, [a1, a2, a3, r]).snapshot, d.reviewDecisionId).toBeNull();
+  });
+
+  it('122 case 4: revoking a later REJECT cannot resurrect the earlier approval', () => {
+    const a = approval(ABOUT, { reviewDecisionId: 'D-A', requestId: 'R-1', decisionTimestamp: T('08:00') });
+    const rj = reject(ABOUT, { reviewDecisionId: 'D-RJ', requestId: 'R-2', decisionTimestamp: T('09:00') });
+    expect(a.reviewPacketHash).toBe(rj.reviewPacketHash);
+    const r = revoke('D-RJ', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('10:00') });
+    const status = deriveDecisionStatus([a, rj, r], ABOUT);
+    expect(status.status).toBe('REVOKED');
+    expect(status.status).not.toBe('APPROVED_CURRENT');
+    expect(snap(ABOUT, a, [a, rj, r]).snapshot).toBeNull();
+  });
+});
+
+describe('hra-0.1.2 revocation — binding-scoped, future evidence unpoisoned', () => {
+  it('123 case 3: OLD stays revoked while NEW evidence becomes approvable', () => {
+    const fresh = relineage(ABOUT, 'fp-generation-2');
+    const oldApp = approval(ABOUT, { reviewDecisionId: 'D-OLD', requestId: 'R-1', decisionTimestamp: T('08:00') });
+    const rev1 = revoke('D-OLD', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') });
+    const newApp = approval(fresh, { reviewDecisionId: 'D-NEW', requestId: 'R-2', decisionTimestamp: T('10:00') });
+    expect(oldApp.reviewPacketHash).not.toBe(newApp.reviewPacketHash);
+    const all = [oldApp, rev1, newApp];
+    // the OLD binding remains de-authorized, and says so
+    const oldStatus = deriveDecisionStatus(all, ABOUT);
+    expect(oldStatus.status).toBe('REVOKED');
+    expect(snap(ABOUT, oldApp, all).snapshot).toBeNull();
+    // the NEW binding is evaluated independently and may be current
+    const newStatus = deriveDecisionStatus(all, fresh);
+    expect(newStatus.status).toBe('APPROVED_CURRENT');
+    expect(newStatus.decisionId).toBe('D-NEW');
+    expect(snap(fresh, newApp, all).snapshot).not.toBeNull();
+  });
+
+  it('124 case 5: a revoked binding stays revoked while an unrelated binding is independent', () => {
+    const other = relineage(ABOUT, 'fp-other');
+    const a = approval(ABOUT, { reviewDecisionId: 'D-A', requestId: 'R-1', decisionTimestamp: T('08:00') });
+    const r = revoke('D-A', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') });
+    const otherApprove = approval(other, { reviewDecisionId: 'D-O', requestId: 'R-2', decisionTimestamp: T('10:00') });
+    const otherReject = reject(other, { reviewDecisionId: 'D-OR', requestId: 'R-3', decisionTimestamp: T('11:00') });
+    expect(deriveDecisionStatus([a, r, otherApprove], ABOUT).status).toBe('REVOKED');
+    expect(deriveDecisionStatus([a, r, otherApprove], other).status).toBe('APPROVED_CURRENT');
+    expect(deriveDecisionStatus([a, r, otherApprove, otherReject], other).status).toBe('REJECTED_CURRENT');
+    expect(deriveDecisionStatus([a, r, otherApprove, otherReject], ABOUT).status).toBe('REVOKED');
+  });
+
+  it('125 case 6: revocation never crosses evidence generations', () => {
+    const gen1 = ABOUT;
+    const gen2 = relineage(ABOUT, 'fp-gen-2');
+    const gen3 = relineage(ABOUT, 'fp-gen-3');
+    const a1 = approval(gen1, { reviewDecisionId: 'D-G1', requestId: 'R-1', decisionTimestamp: T('08:00') });
+    const a2 = approval(gen2, { reviewDecisionId: 'D-G2', requestId: 'R-2', decisionTimestamp: T('09:00') });
+    const a3 = approval(gen3, { reviewDecisionId: 'D-G3', requestId: 'R-3', decisionTimestamp: T('10:00') });
+    // revoke generation 1 only
+    const r1 = revoke('D-G1', { reviewDecisionId: 'D-R1', requestId: 'R-R1', decisionTimestamp: T('11:00') });
+    const all1 = [a1, a2, a3, r1];
+    expect(deriveDecisionStatus(all1, gen1).status).toBe('REVOKED');
+    expect(deriveDecisionStatus(all1, gen3).status).toBe('APPROVED_CURRENT');
+    expect(snap(gen3, a3, all1).snapshot).not.toBeNull();
+    // revoke generation 2 instead: generation 1 attribution is untouched
+    const r2 = revoke('D-G2', { reviewDecisionId: 'D-R2', requestId: 'R-R2', decisionTimestamp: T('11:00') });
+    const all2 = [a1, a2, a3, r2];
+    expect(deriveDecisionStatus(all2, gen2).status).toBe('REVOKED');
+    // generation 1 is NOT revoked by a generation 2 revocation. It is merely
+    // SUPERSEDED, by the later generation 3 approval — the accepted hra-0.1.1
+    // semantic — and its attribution still names D-G1.
+    const gen1Status = deriveDecisionStatus(all2, gen1);
+    expect(gen1Status.status).toBe('SUPERSEDED');
+    expect(gen1Status.status).not.toBe('REVOKED');
+    expect(gen1Status.decisionId).toBe('D-G1');
+    expect(gen1Status.consideredDecisionIds).toContain('D-G1');
+    // with no later generation standing, generation 1 is current again
+    expect(deriveDecisionStatus([a1, a2, r2], gen1).status).toBe('APPROVED_CURRENT');
+    expect(deriveDecisionStatus([a1, a2, r2], gen1).decisionId).toBe('D-G1');
+  });
+
+  it('126 a later explicit human approval of the same binding is a new deliberate act', () => {
+    const a = approval(ABOUT, { reviewDecisionId: 'D-A', requestId: 'R-1', decisionTimestamp: T('08:00') });
+    const r = revoke('D-A', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') });
+    const later = approval(ABOUT, { reviewDecisionId: 'D-L', requestId: 'R-2', decisionTimestamp: T('23:00') });
+    // the revoke precedes the new approval, so it does not reach it
+    const status = deriveDecisionStatus([a, r, later], ABOUT);
+    expect(status.status).toBe('APPROVED_CURRENT');
+    expect(status.decisionId).toBe('D-L');
+    expect(snap(ABOUT, later, [a, r, later]).snapshot).not.toBeNull();
+    // but the revoked earlier approval still cannot carry it
+    expect(snap(ABOUT, a, [a, r, later]).snapshot).toBeNull();
+  });
+});
+
+describe('hra-0.1.2 revocation — preserved invariants', () => {
+  it('127 malformed revoke targeting is still fail-closed, unweakened', () => {
+    const a = approval(ABOUT, { reviewDecisionId: 'D-A', requestId: 'R-1', decisionTimestamp: T('08:00') });
+    const cases: [string, ReviewDecisionRecord[]][] = [
+      ['no target', [a, revoke(undefined, { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') })]],
+      ['target absent', [a, revoke('D-NOT-HERE', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') })]],
+      ['target is later', [a, revoke('D-LATER', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') }),
+        approval(ABOUT, { reviewDecisionId: 'D-LATER', requestId: 'R-X', decisionTimestamp: T('10:00') })]],
+      ['self target', [a, revoke('D-R', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') })]],
+      ['target is a REVOKE', [a,
+        revoke('D-A', { reviewDecisionId: 'D-R1', requestId: 'R-R1', decisionTimestamp: T('09:00') }),
+        revoke('D-R1', { reviewDecisionId: 'D-R2', requestId: 'R-R2', decisionTimestamp: T('10:00') })]],
+    ];
+    for (const [label, decisions] of cases) {
+      const status = deriveDecisionStatus(decisions, ABOUT);
+      expect(status.status, label).toBe('REVOKED');
+      expect(status.reason, label).toContain('failing closed');
+      expect(snap(ABOUT, a, decisions).snapshot, label).toBeNull();
+    }
+  });
+
+  it('128 SUPERSEDED semantics are preserved and still never authorize', () => {
+    const a1 = approval(ABOUT, { reviewDecisionId: 'D-A1', requestId: 'R-1', decisionTimestamp: T('08:00') });
+    const laterOther = reject(relineage(ABOUT, 'fp-gen-2'), {
+      reviewDecisionId: 'D-R2', requestId: 'R-2', decisionTimestamp: T('09:00') });
+    const status = deriveDecisionStatus([a1, laterOther], ABOUT);
+    expect(status.status).toBe('SUPERSEDED');
+    expect(status.decisionId).toBe('D-A1');
+    const out = snap(ABOUT, a1, [a1, laterOther]);
+    expect(out.snapshot).toBeNull();
+    expect(out.failures.map(f => f.code)).toContain('decision_not_current');
+    const live = snap(ABOUT, a1, [a1]).snapshot!;
+    expect(deriveSnapshotConsumability(live, ABOUT, [a1, laterOther]).status).toBe('NOT_CONSUMABLE');
+  });
+
+  it('129 a snapshot taken before revocation is no longer consumable afterwards', () => {
+    const a1 = approval(ABOUT, { reviewDecisionId: 'D-A1', requestId: 'R-1', decisionTimestamp: T('08:00') });
+    const a2 = approval(ABOUT, { reviewDecisionId: 'D-A2', requestId: 'R-2', decisionTimestamp: T('09:00') });
+    // a snapshot legitimately derived while A1 was current
+    const live = snap(ABOUT, a1, [a1]).snapshot!;
+    expect(live).not.toBeNull();
+    const r = revoke('D-A2', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('10:00') });
+    const after = deriveSnapshotConsumability(live, ABOUT, [a1, a2, r]);
+    expect(after.status).toBe('NOT_CONSUMABLE');
+    expect(after.reason).toContain('revoked');
+  });
+
+  it('130 revocation derivation mutates nothing and stays deterministic', () => {
+    const a1 = approval(ABOUT, { reviewDecisionId: 'D-A1', requestId: 'R-1', decisionTimestamp: T('08:00') });
+    const a2 = approval(ABOUT, { reviewDecisionId: 'D-A2', requestId: 'R-2', decisionTimestamp: T('09:00') });
+    const r = revoke('D-A2', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('10:00') });
+    const history = [a1, a2, r];
+    const before = JSON.stringify(history);
+    const first = deriveDecisionStatus(history, ABOUT);
+    const again = deriveDecisionStatus([...history].reverse(), ABOUT);
+    expect(JSON.stringify(history)).toBe(before);
+    expect(history.map(d => d.reviewDecisionId)).toEqual(['D-A1', 'D-A2', 'D-R']);
+    expect(again.status).toBe(first.status);
+    expect(again.decisionId).toBe(first.decisionId);
+    // no mutable approval state exists to flip
+    expect(productionCode()).not.toContain('approved =');
+    expect(productionCode()).not.toContain('isApproved');
   });
 });
