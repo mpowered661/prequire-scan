@@ -6,17 +6,45 @@
 // This is the same lesson the hra-0.1.1 repair recorded: delimiter-joined
 // encodings collide, structural ones do not.
 //
+// WHAT THIS HASH IS, AND IS NOT.
+//
+// `input_hash` is an INTEGRITY IDENTITY over the exact persisted
+// QualificationInput REPRESENTATION. It answers one question:
+//
+//     "Is this the exact immutable QualificationInput we persisted?"
+//
+// It does NOT answer:
+//
+//     "Would these two inputs qualify identically?"
+//
+// It is therefore not a semantic qualification identity, not a ReviewPacket
+// identity, not a claim identity, and not a replacement for
+// evidence_fingerprint. Those identities are produced by the accepted
+// qualification, opportunity-review and human-review layers.
+//
+// It binds: every field value, collection membership, collection ordering AS
+// PERSISTED, coverage, scan identity, and the hash-contract version.
+//
+// CONSEQUENCE, intended and accepted:
+//   same persisted representation            -> same input_hash
+//   same semantic evidence, reordered        -> MAY produce a different input_hash
+//
+// CORRECTION (follow-up to the v0.1 acceptance inspection): an earlier version
+// of this comment justified order-sensitivity by claiming "the qualification
+// contract treats them as sequences, not sets". THAT WAS FALSE. The accepted
+// qualification layer is ORDER-INSENSITIVE for its semantic result and asserts
+// so in its own tests — reversing all four collections yields an identical
+// qualification result and an identical ReviewPacket set, and duplicate
+// evidence does not inflate counts. Order-sensitivity here is a property of
+// the INTEGRITY hash, not a property of the qualification contract.
+//
 // ORDERING RULES (explicit, because getting these wrong silently changes identity):
 //   - Object keys are emitted in a FIXED order written in this file, never from
 //     Object.keys of the incoming object, so property insertion order cannot
 //     affect the hash.
-//   - ALL FOUR evidence collections are ORDER-SENSITIVE and are hashed in the
-//     order observed. The qualification contract treats them as sequences, not
-//     sets: `scanUrls` carries selection ordering, `pageObservations` carries
-//     per-engine ordering, `linkTargets` and `linkRelationships` carry
-//     observation order. Re-sorting them would discard real observation
-//     structure and let two different observations hash alike. Nothing here is
-//     normalized as set-like.
+//   - All four evidence collections are hashed in the order persisted. They are
+//     NOT sorted and NOT deduplicated: normalizing them would make the hash
+//     stop identifying the stored representation, which is its only job.
 //   - null is preserved and is distinct from an absent key and from "".
 //   - An absent collection never reaches this function: the adapter refuses it.
 

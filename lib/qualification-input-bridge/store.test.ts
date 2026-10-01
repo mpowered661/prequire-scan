@@ -116,3 +116,53 @@ describe('immutable persistence', () => {
     expect(src).toContain('.select(');
   });
 });
+
+describe('migration 009 — STRUCTURAL inspection of the immutability contract', () => {
+  // IMPORTANT: these assert what the migration SQL EXPRESSES. They are not a
+  // runtime PostgreSQL test — no psql and no running database is available in
+  // this environment, so nothing here proves live DML behaviour. The migration
+  // carries a commented smoke test (UPDATE/DELETE inside a rolled-back
+  // transaction) to be run by hand in the SQL editor after it is applied.
+  const sql = readFileSync(new URL('../../migrations/009-qualification-inputs.sql', import.meta.url), 'utf8');
+
+  it('35 a BEFORE UPDATE OR DELETE trigger refuses mutation for every role', () => {
+    expect(sql).toContain('create or replace function public.refuse_qualification_input_mutation()');
+    expect(sql).toMatch(/before update or delete on public\.qualification_inputs/);
+    expect(sql).toContain('for each row');
+    expect(sql).toContain('execute function public.refuse_qualification_input_mutation()');
+    expect(sql).toContain('raise exception');
+    expect(sql).toContain('qualification_inputs is immutable');
+    // the transaction aborts if the trigger is somehow absent
+    expect(sql).toContain('Migration 009 failed: qualification_inputs_immutable trigger not present');
+  });
+
+  it('36 UPDATE and DELETE privileges are revoked from every API role', () => {
+    for (const role of ['service_role', 'authenticated', 'anon']) {
+      expect(sql, role).toContain(`revoke update, delete on public.qualification_inputs from ${role};`);
+    }
+    // and no UPDATE/DELETE policy is granted anywhere
+    expect(sql).not.toMatch(/for\s+update/i);
+    expect(sql).not.toMatch(/for\s+delete/i);
+  });
+
+  it('37 the corrected contract no longer claims RLS stops service_role', () => {
+    // the inaccurate claim is gone, and the correction plus the real limitation
+    // are both recorded
+    expect(sql).not.toContain('so even the service role cannot rewrite or remove a stored artifact');
+    expect(sql).toContain('THAT WAS WRONG');
+    expect(sql).toContain('BYPASSRLS');
+    expect(sql).toContain('LIMITATION, stated accurately');
+    expect(sql).toContain('not absolute immutability');
+  });
+
+  it('38 the migration remains additive and independent of migration 008', () => {
+    // executable SQL only: the header legitimately NAMES the tables it does not touch
+    const statements = sql.split('\n').filter(l => !l.trim().startsWith('--')).join('\n');
+    expect(statements).not.toMatch(/site_scans/);
+    expect(statements).not.toMatch(/page_observations|scan_links|scan_link_targets/);
+    expect(statements).not.toMatch(/drop table|alter table public\.(scan_urls|site_scans|page_observations)/i);
+    // follows the repository's BEGIN / guard / COMMIT convention
+    expect(sql).toContain('BEGIN;');
+    expect(sql).toContain('COMMIT;');
+  });
+});
