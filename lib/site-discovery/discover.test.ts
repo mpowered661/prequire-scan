@@ -307,16 +307,32 @@ describe('runDiscovery', () => {
     expect(result.urls.filter(row => row.discoveryMethod === 'sitemap_index')).toHaveLength(10);
   });
 
-  it('is not imported from any existing code path', () => {
+  // Coupling tripwire: site-discovery must not be reachable from any code path
+  // except the EXPLICITLY NAMED ones below. The guard is unchanged in strength —
+  // every unlisted file is still an offender. The allowlist records authorized
+  // callers, which is exactly what the two siteScans entries already did.
+  //
+  // 2026-10-01: the trusted scan -> QualificationInput bridge added the first
+  // authorized production invocation (app/api/internal/site-scan/route.ts), the
+  // operator-triggered server-side scan entrypoint. The bridge's own modules
+  // import site-discovery by relative path and carry no literal 'lib/site-discovery'.
+  const AUTHORIZED_SITE_DISCOVERY_CALLERS = [
+    `${path.sep}lib${path.sep}supabase${path.sep}siteScans.ts`,
+    `${path.sep}lib${path.sep}supabase${path.sep}siteScans.test.ts`,
+    `${path.sep}app${path.sep}api${path.sep}internal${path.sep}site-scan${path.sep}route.ts`,
+  ];
+
+  it('is not imported from any code path except the authorized callers', () => {
     const root = process.cwd();
     const files = walk(root).filter(file =>
       file.endsWith('.ts') &&
       !file.includes(`${path.sep}node_modules${path.sep}`) &&
       !file.includes(`${path.sep}lib${path.sep}site-discovery${path.sep}`) &&
-      !file.endsWith(`${path.sep}lib${path.sep}supabase${path.sep}siteScans.ts`) &&
-      !file.endsWith(`${path.sep}lib${path.sep}supabase${path.sep}siteScans.test.ts`));
+      !AUTHORIZED_SITE_DISCOVERY_CALLERS.some(allowed => file.endsWith(allowed)));
     const offenders = files.filter(file => fs.readFileSync(file, 'utf8').includes('lib/site-discovery'));
     expect(offenders).toEqual([]);
+    // the allowlist itself must stay small and explicit
+    expect(AUTHORIZED_SITE_DISCOVERY_CALLERS).toHaveLength(3);
   });
 });
 
