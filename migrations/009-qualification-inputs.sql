@@ -1,4 +1,5 @@
 -- Migration 009: immutable QualificationInput artifact, one per completed scan.
+-- *** NOT APPLIED. *** This file has never been executed against any database.
 -- Run in Supabase SQL Editor (same project as migrations 001-008).
 --
 -- WHY: the trusted scan -> QualificationInput bridge needs an immutable record
