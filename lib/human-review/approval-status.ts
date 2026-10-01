@@ -123,14 +123,39 @@ export function validateReviewDecision(d: ReviewDecisionRecord): DecisionValidat
 }
 
 /**
- * Total deterministic ordering: by decisionTimestamp, then reviewDecisionId as
- * the tie-break. Never by array or insertion order.
+ * Shape of a validated decision timestamp, with the fractional part captured so
+ * it can be normalized to fixed precision.
+ */
+const TIMESTAMP_SHAPE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$/;
+
+/**
+ * Normalizes a supplied ISO timestamp to fixed millisecond precision, so that
+ * LEXICAL ordering equals CHRONOLOGICAL ordering.
+ *
+ * `validateReviewDecision` accepts both `...T18:00:00Z` and `...T18:00:00.500Z`.
+ * Compared as raw strings these order wrongly, because "." (0x2E) sorts before
+ * "Z" (0x5A): the chronologically later `.500Z` sorted FIRST. Equally `.1Z` and
+ * `.10Z` denote the same instant but differ as strings.
+ *
+ * This reads SUPPLIED DATA only. It introduces no clock: no Date.now(), no
+ * `new Date()`, no ambient time. A malformed value is returned unchanged so
+ * ordering stays deterministic; validation is what rejects it.
+ */
+export function normalizedDecisionTimestamp(timestamp: string): string {
+  const m = TIMESTAMP_SHAPE.exec(timestamp);
+  if (!m) return timestamp;
+  return `${m[1]}.${(m[2] ?? '').padEnd(3, '0')}Z`;
+}
+
+/**
+ * Total deterministic ordering: by normalized decisionTimestamp, then
+ * reviewDecisionId as the tie-break. Never by array or insertion order.
  */
 export function orderDecisions(decisions: readonly ReviewDecisionRecord[]): ReviewDecisionRecord[] {
   return [...decisions].sort((a, b) => {
-    if (a.decisionTimestamp !== b.decisionTimestamp) {
-      return a.decisionTimestamp < b.decisionTimestamp ? -1 : 1;
-    }
+    const at = normalizedDecisionTimestamp(a.decisionTimestamp);
+    const bt = normalizedDecisionTimestamp(b.decisionTimestamp);
+    if (at !== bt) return at < bt ? -1 : 1;
     return a.reviewDecisionId < b.reviewDecisionId ? -1 : a.reviewDecisionId > b.reviewDecisionId ? 1 : 0;
   });
 }
@@ -143,13 +168,77 @@ function sameBindingTuple(a: ReviewDecisionRecord, b: ReviewDecisionRecord): boo
     && a.reviewPacketHash === b.reviewPacketHash;
 }
 
+interface RevocationResolution {
+  /** revoked decision id -> the id of the REVOKE that revoked it. */
+  revokedBy: Map<string, string>;
+  /** Revocations whose targeting is absent, unresolvable or ambiguous. */
+  malformed: { revokeId: string; detail: string }[];
+}
+
+/**
+ * Resolves which decisions a history's REVOKEs actually revoke.
+ *
+ * FROZEN SEMANTICS: REVOKED means an explicit LATER human REVOKE. A REVOKE
+ * therefore applies to exactly the decision it NAMES, and only when that
+ * decision exists in the considered history and is strictly EARLIER in the
+ * deterministic order. It does not apply to decisions made after it, and it
+ * does not apply to decisions it did not name.
+ *
+ * Anything else — no target, a target outside the considered history, a target
+ * at or after the revoke, a self-target, or a target that is itself a REVOKE —
+ * is ambiguous, and the caller FAILS CLOSED rather than guessing.
+ *
+ * Nothing is mutated: history stays append-only and prior decisions are read
+ * only. The resolution is derived on every call.
+ */
+function resolveRevocations(ordered: readonly ReviewDecisionRecord[]): RevocationResolution {
+  const positionOf = new Map<string, number>();
+  ordered.forEach((d, i) => positionOf.set(d.reviewDecisionId, i));
+
+  const revokedBy = new Map<string, string>();
+  const malformed: { revokeId: string; detail: string }[] = [];
+
+  ordered.forEach((d, i) => {
+    if (d.decisionType !== 'REVOKE') return;
+    const target = d.revokesReviewDecisionId;
+    if (typeof target !== 'string' || target.length === 0) {
+      malformed.push({ revokeId: d.reviewDecisionId, detail: 'names no target decision' });
+      return;
+    }
+    const ti = positionOf.get(target);
+    if (ti === undefined) {
+      malformed.push({ revokeId: d.reviewDecisionId, detail: `names ${target}, which is not in the considered history` });
+      return;
+    }
+    if (ti >= i) {
+      malformed.push({ revokeId: d.reviewDecisionId, detail: `names ${target}, which is not strictly earlier` });
+      return;
+    }
+    if (ordered[ti].decisionType === 'REVOKE') {
+      malformed.push({ revokeId: d.reviewDecisionId, detail: `names ${target}, which is itself a REVOKE` });
+      return;
+    }
+    revokedBy.set(target, d.reviewDecisionId);
+  });
+
+  return { revokedBy, malformed };
+}
+
 /**
  * Derives the current status for one proposition from immutable decisions and
  * the freshly derived packet.
  *
- * Precedence: an explicit REVOKE outranks everything; otherwise binding
- * mismatch decides STALE vs INVALID; otherwise the latest decision for the
- * tuple decides, and earlier ones are SUPERSEDED.
+ * Order of reasoning:
+ *   1. no decisions for this opportunity  -> UNREVIEWED
+ *   2. ambiguous revocation targeting     -> REVOKED (fail closed)
+ *   3. nothing left standing              -> REVOKED
+ *   4. the current decision binds exactly -> APPROVED_CURRENT / REJECTED_CURRENT
+ *   5. an earlier decision binds exactly  -> SUPERSEDED
+ *   6. otherwise                          -> STALE or INVALID
+ *
+ * A prior REVOKE does not poison later legitimate approvals: once revocation is
+ * resolved per named target, a newer unrevoked decision becomes current
+ * normally.
  */
 export function deriveDecisionStatus(
   decisions: readonly ReviewDecisionRecord[],
@@ -163,61 +252,74 @@ export function deriveDecisionStatus(
     return { status: 'UNREVIEWED', decisionId: null, reason: 'no decision for this opportunity', consideredDecisionIds };
   }
 
-  const latest = relevant[relevant.length - 1];
-
-  // An explicit human REVOKE removes current usability regardless of bindings.
-  const revocations = relevant.filter(d => d.decisionType === 'REVOKE');
-  if (revocations.length > 0) {
-    const newestRevoke = revocations[revocations.length - 1];
+  const { revokedBy, malformed } = resolveRevocations(relevant);
+  if (malformed.length > 0) {
     return {
       status: 'REVOKED',
-      decisionId: newestRevoke.reviewDecisionId,
-      reason: `explicitly revoked by ${newestRevoke.reviewDecisionId}`
-        + (newestRevoke.revokesReviewDecisionId ? `, targeting ${newestRevoke.revokesReviewDecisionId}` : ''),
+      decisionId: malformed[0].revokeId,
+      reason: 'ambiguous revocation targeting, failing closed: '
+        + malformed.map(m => `${m.revokeId} ${m.detail}`).join('; '),
       consideredDecisionIds,
     };
   }
 
-  const binding = compareBinding(latest, packet);
+  // Decisions that still stand: not themselves revocations, and not revoked.
+  const standing = relevant.filter(d => d.decisionType !== 'REVOKE' && !revokedBy.has(d.reviewDecisionId));
+  if (standing.length === 0) {
+    const revocations = relevant.filter(d => d.decisionType === 'REVOKE');
+    const newest = revocations[revocations.length - 1];
+    return {
+      status: 'REVOKED',
+      decisionId: newest.reviewDecisionId,
+      reason: `every decision for this opportunity was explicitly revoked; newest revocation ${newest.reviewDecisionId}`
+        + (newest.revokesReviewDecisionId ? `, targeting ${newest.revokesReviewDecisionId}` : ''),
+      consideredDecisionIds,
+    };
+  }
+
+  const current = standing[standing.length - 1];
+  const binding = compareBinding(current, packet);
+
+  if (binding.outcome === 'EXACT') {
+    if (current.decisionType === 'APPROVE_PRESENTATION') {
+      return { status: 'APPROVED_CURRENT', decisionId: current.reviewDecisionId, reason: 'bindings exact and approval is current', consideredDecisionIds };
+    }
+    return { status: 'REJECTED_CURRENT', decisionId: current.reviewDecisionId, reason: 'bindings exact and rejection is current', consideredDecisionIds };
+  }
+
+  // The current decision does not bind this packet. If an EARLIER standing
+  // decision does, the decision matching this packet has been superseded by a
+  // later decision for the same opportunity, and cannot authorize use.
+  const matching = standing.filter(d => compareBinding(d, packet).outcome === 'EXACT');
+  if (matching.length > 0) {
+    const superseded = matching[matching.length - 1];
+    return {
+      status: 'SUPERSEDED',
+      decisionId: superseded.reviewDecisionId,
+      reason: `${superseded.reviewDecisionId} binds this packet exactly but was superseded by ${current.reviewDecisionId}`,
+      consideredDecisionIds,
+    };
+  }
+
   if (binding.outcome === 'STALE_EVIDENCE') {
     return {
       status: 'STALE',
-      decisionId: latest.reviewDecisionId,
+      decisionId: current.reviewDecisionId,
       reason: `evidence binding changed: ${binding.mismatches.join('; ')}`,
       consideredDecisionIds,
     };
   }
-  if (binding.outcome !== 'EXACT') {
-    return {
-      status: 'INVALID',
-      decisionId: latest.reviewDecisionId,
-      reason: `${binding.outcome}: ${binding.mismatches.join('; ')}`,
-      consideredDecisionIds,
-    };
-  }
-
-  // Bindings are exact. Within this tuple the latest decision is current and
-  // any earlier one is superseded.
-  const tuple = relevant.filter(d => sameBindingTuple(d, latest));
-  const current = tuple[tuple.length - 1];
-  if (current.reviewDecisionId !== latest.reviewDecisionId) {
-    return {
-      status: 'SUPERSEDED',
-      decisionId: latest.reviewDecisionId,
-      reason: `superseded by ${current.reviewDecisionId}`,
-      consideredDecisionIds,
-    };
-  }
-
-  if (current.decisionType === 'APPROVE_PRESENTATION') {
-    return { status: 'APPROVED_CURRENT', decisionId: current.reviewDecisionId, reason: 'bindings exact and approval is latest', consideredDecisionIds };
-  }
-  return { status: 'REJECTED_CURRENT', decisionId: current.reviewDecisionId, reason: 'bindings exact and rejection is latest', consideredDecisionIds };
+  return {
+    status: 'INVALID',
+    decisionId: current.reviewDecisionId,
+    reason: `${binding.outcome}: ${binding.mismatches.join('; ')}`,
+    consideredDecisionIds,
+  };
 }
 
 /**
  * Whether a specific earlier decision is superseded within its binding tuple.
- * Deterministic by (decisionTimestamp, reviewDecisionId).
+ * Deterministic by (normalized decisionTimestamp, reviewDecisionId).
  */
 export function isSuperseded(
   decision: ReviewDecisionRecord,

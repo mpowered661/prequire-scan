@@ -7,7 +7,13 @@ import type { QualificationInput } from '../opportunity-qualification/types';
 import { deriveReview, type QualificationResultView } from '../opportunity-review/review-packet';
 import type { ReviewPacket } from '../opportunity-review/types';
 import { deriveApprovalEligibility } from './approval-eligibility';
-import { deriveDecisionStatus, isSuperseded, orderDecisions, validateReviewDecision } from './approval-status';
+import {
+  deriveDecisionStatus,
+  isSuperseded,
+  normalizedDecisionTimestamp,
+  orderDecisions,
+  validateReviewDecision,
+} from './approval-status';
 import { compareBinding } from './binding';
 import { recordsRequiredCapability, reviewerIdentityValue } from './future-identity';
 import {
@@ -17,7 +23,9 @@ import {
   compareIdempotency,
 } from './idempotency';
 import {
+  InvalidPacketIdentityError,
   PACKET_HASH_INPUTS,
+  canonicalPacketJson,
   gateTraceDigest,
   normalizeRefs,
   reviewPacketHash,
@@ -31,7 +39,7 @@ import {
 } from './snapshot';
 import { PLACEHOLDER_OPERATOR, UNSAFE_testOnlyDecision, UNSAFE_testOnlyTrustedReviewer } from './test-only-fixtures';
 import type { EvidenceRefView, ReviewDecisionRecord, ReviewPacketView } from './types';
-import { MAX_REVIEWER_NOTE_CHARS, UNREPRESENTABLE_STATES } from './versions';
+import { HRA_VERSION, MAX_REVIEWER_NOTE_CHARS, UNREPRESENTABLE_STATES } from './versions';
 
 const input = JSON.parse(
   readFileSync(new URL('../opportunity-qualification/__fixtures__/michael-pilot.json', import.meta.url), 'utf8'),
@@ -671,5 +679,379 @@ describe('POSITIVE CONTROLS — the system is not merely rejecting everything', 
     const id2 = deterministicSnapshotId(a.reviewDecisionId, a.claimHash, a.evidenceFingerprint, a.reviewPacketHash);
     expect(id1).toBe(id2);
     expect(deterministicSnapshotId('other', a.claimHash, a.evidenceFingerprint, a.reviewPacketHash)).not.toBe(id1);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// hra-0.1.1 CONFORMANCE REPAIR — adversarial cases 93-112.
+// Each names the defect it proves corrected.
+// ═══════════════════════════════════════════════════════════════
+
+/** Same opportunity, different evidence lineage. */
+function relineage(packet: ReviewPacketView, fingerprint: string): ReviewPacketView {
+  return { ...packet, evidenceFingerprint: fingerprint };
+}
+function revoke(target: string | undefined, over: Partial<ReviewDecisionRecord> = {},
+  packet: ReviewPacketView = ABOUT): ReviewDecisionRecord {
+  return UNSAFE_testOnlyDecision({
+    decisionType: 'REVOKE', packet, revokesReviewDecisionId: target, override: over,
+  });
+}
+function reject(packet: ReviewPacketView, over: Partial<ReviewDecisionRecord> = {}): ReviewDecisionRecord {
+  return UNSAFE_testOnlyDecision({
+    decisionType: 'REJECT', packet,
+    structuredRejectionReason: 'evidence_not_convincing', override: over,
+  });
+}
+const T = (hhmm: string) => `2026-09-30T${hhmm}:00.000Z`;
+
+describe('repair 1 — REVOKE ordering and targeting', () => {
+  it('93 APPROVE A, REVOKE A, then a later APPROVE B on new evidence becomes current', () => {
+    const fresh = relineage(ABOUT, 'fp-second-generation');
+    const a = approval(ABOUT, { reviewDecisionId: 'D-A', requestId: 'R-A', decisionTimestamp: T('08:00') });
+    const r = revoke('D-A', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') });
+    const b = approval(fresh, { reviewDecisionId: 'D-B', requestId: 'R-B', decisionTimestamp: T('23:00') });
+    const status = deriveDecisionStatus([a, r, b], fresh);
+    expect(status.status).toBe('APPROVED_CURRENT');
+    expect(status.decisionId).toBe('D-B');
+    expect(snap(fresh, b, [a, r, b]).snapshot).not.toBeNull();
+  });
+
+  it('94 a prior REVOKE does not revoke a later approval merely by existing in history', () => {
+    const a = approval(ABOUT, { reviewDecisionId: 'D-A', requestId: 'R-A', decisionTimestamp: T('08:00') });
+    const r = revoke('D-A', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') });
+    const later = approval(ABOUT, { reviewDecisionId: 'D-L', requestId: 'R-L', decisionTimestamp: T('23:00') });
+    expect(orderDecisions([a, r, later]).map(d => d.reviewDecisionId)).toEqual(['D-A', 'D-R', 'D-L']);
+    const status = deriveDecisionStatus([a, r, later], ABOUT);
+    expect(status.status).toBe('APPROVED_CURRENT');
+    expect(status.decisionId).toBe('D-L');
+  });
+
+  it('95 a REVOKE naming one decision does not suppress an unrelated later approval', () => {
+    const other = relineage(ABOUT, 'fp-other');
+    const a = approval(ABOUT, { reviewDecisionId: 'D-A', requestId: 'R-A', decisionTimestamp: T('08:00') });
+    const r = revoke('D-A', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') });
+    const unrelated = approval(other, { reviewDecisionId: 'D-U', requestId: 'R-U', decisionTimestamp: T('10:00') });
+    const status = deriveDecisionStatus([a, r, unrelated], other);
+    expect(status.status).toBe('APPROVED_CURRENT');
+    expect(status.decisionId).toBe('D-U');
+  });
+});
+
+describe('repair 1 — targeting precision and fail-closed ambiguity', () => {
+  it('96 explicit revokesReviewDecisionId targeting is honoured per decision', () => {
+    const a1 = approval(ABOUT, { reviewDecisionId: 'D-1', requestId: 'R-1', decisionTimestamp: T('08:00') });
+    const a2 = approval(ABOUT, { reviewDecisionId: 'D-2', requestId: 'R-2', decisionTimestamp: T('09:00') });
+    const r1 = revoke('D-1', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('10:00') });
+    const keepLater = deriveDecisionStatus([a1, a2, r1], ABOUT);
+    expect(keepLater.status).toBe('APPROVED_CURRENT');
+    expect(keepLater.decisionId).toBe('D-2');
+    const r2 = revoke('D-2', { reviewDecisionId: 'D-R2', requestId: 'R-R2', decisionTimestamp: T('11:00') });
+    const keepEarlier = deriveDecisionStatus([a1, a2, r2], ABOUT);
+    expect(keepEarlier.status).toBe('APPROVED_CURRENT');
+    expect(keepEarlier.decisionId).toBe('D-1');
+  });
+
+  it('97 when every decision is revoked the status is REVOKED and no snapshot derives', () => {
+    const a = approval(ABOUT, { reviewDecisionId: 'D-A', requestId: 'R-A', decisionTimestamp: T('08:00') });
+    const r = revoke('D-A', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') });
+    const status = deriveDecisionStatus([a, r], ABOUT);
+    expect(status.status).toBe('REVOKED');
+    expect(status.decisionId).toBe('D-R');
+    expect(snap(ABOUT, a, [a, r]).snapshot).toBeNull();
+  });
+
+  it('98 malformed or ambiguous revocation targeting FAILS CLOSED', () => {
+    const a = approval(ABOUT, { reviewDecisionId: 'D-A', requestId: 'R-A', decisionTimestamp: T('08:00') });
+    const cases: [string, ReviewDecisionRecord[]][] = [
+      ['no target', [a, revoke(undefined, { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') })]],
+      ['target absent', [a, revoke('D-NOT-HERE', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') })]],
+      ['target is later', [a, revoke('D-LATER', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') }),
+        approval(ABOUT, { reviewDecisionId: 'D-LATER', requestId: 'R-X', decisionTimestamp: T('10:00') })]],
+      ['self target', [a, revoke('D-R', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') })]],
+      ['target is a REVOKE', [a,
+        revoke('D-A', { reviewDecisionId: 'D-R1', requestId: 'R-R1', decisionTimestamp: T('09:00') }),
+        revoke('D-R1', { reviewDecisionId: 'D-R2', requestId: 'R-R2', decisionTimestamp: T('10:00') })]],
+    ];
+    for (const [label, decisions] of cases) {
+      const status = deriveDecisionStatus(decisions, ABOUT);
+      expect(status.status, label).toBe('REVOKED');
+      expect(status.reason, label).toContain('failing closed');
+    }
+  });
+
+  it('99 status derivation never mutates the supplied append-only history', () => {
+    const a = approval(ABOUT, { reviewDecisionId: 'D-A', requestId: 'R-A', decisionTimestamp: T('08:00') });
+    const r = revoke('D-A', { reviewDecisionId: 'D-R', requestId: 'R-R', decisionTimestamp: T('09:00') });
+    const history = [a, r];
+    const before = JSON.stringify(history);
+    deriveDecisionStatus(history, ABOUT);
+    deriveDecisionStatus(history, relineage(ABOUT, 'fp-x'));
+    orderDecisions(history);
+    expect(JSON.stringify(history)).toBe(before);
+    expect(history.map(d => d.reviewDecisionId)).toEqual(['D-A', 'D-R']);
+  });
+});
+
+describe('repair 2 — SUPERSEDED is derivable through deriveDecisionStatus', () => {
+  // A later decision for the same opportunity bound to DIFFERENT evidence means
+  // the decision matching this packet is no longer the operative one.
+  const a1 = approval(ABOUT, { reviewDecisionId: 'D-A1', requestId: 'R-A1', decisionTimestamp: T('08:00') });
+  const nextGen = relineage(ABOUT, 'fp-next-generation');
+  const laterOnNewEvidence = reject(nextGen, { reviewDecisionId: 'D-R2', requestId: 'R-R2', decisionTimestamp: T('09:00') });
+
+  it('100 SUPERSEDED is returned by deriveDecisionStatus, not only by isSuperseded', () => {
+    const status = deriveDecisionStatus([a1, laterOnNewEvidence], ABOUT);
+    expect(status.status).toBe('SUPERSEDED');
+    expect(status.decisionId).toBe('D-A1');
+    expect(status.reason).toContain('D-R2');
+    expect(status.consideredDecisionIds).toEqual(['D-A1', 'D-R2']);
+  });
+
+  it('101 SUPERSEDED does not authorize: no snapshot, not consumable', () => {
+    const all = [a1, laterOnNewEvidence];
+    const out = snap(ABOUT, a1, all);
+    expect(out.snapshot).toBeNull();
+    expect(out.failures.map(f => f.code)).toContain('decision_not_current');
+    const live = snap(ABOUT, a1, [a1]).snapshot!;
+    expect(deriveSnapshotConsumability(live, ABOUT, all).status).toBe('NOT_CONSUMABLE');
+  });
+
+  it('102 SUPERSEDED is not reported when the current decision binds exactly', () => {
+    const a2 = approval(ABOUT, { reviewDecisionId: 'D-A2', requestId: 'R-A2', decisionTimestamp: T('10:00') });
+    expect(deriveDecisionStatus([a1, a2], ABOUT).status).toBe('APPROVED_CURRENT');
+    expect(isSuperseded(a1, [a1, a2])).toBe(true);
+    expect(isSuperseded(a2, [a1, a2])).toBe(false);
+  });
+
+  it('103 every DecisionStatus value in the frozen vocabulary is reachable', () => {
+    const reached = new Set<string>();
+    reached.add(deriveDecisionStatus([], ABOUT).status);
+    reached.add(deriveDecisionStatus([approval(ABOUT)], ABOUT).status);
+    reached.add(deriveDecisionStatus([reject(ABOUT)], ABOUT).status);
+    const a = approval(ABOUT, { reviewDecisionId: 'D-X', requestId: 'R-X', decisionTimestamp: T('08:00') });
+    reached.add(deriveDecisionStatus([a, revoke('D-X', { reviewDecisionId: 'D-Y', requestId: 'R-Y', decisionTimestamp: T('09:00') })], ABOUT).status);
+    reached.add(deriveDecisionStatus([a1, laterOnNewEvidence], ABOUT).status);
+    reached.add(deriveDecisionStatus([approval(ABOUT)], relineage(ABOUT, 'fp-moved')).status);
+    reached.add(deriveDecisionStatus([approval(ABOUT)], { ...ABOUT, qualificationStatus: 'NOT_QUALIFIED' }).status);
+    expect([...reached].sort()).toEqual([
+      'APPROVED_CURRENT', 'INVALID', 'REJECTED_CURRENT', 'REVOKED', 'STALE', 'SUPERSEDED', 'UNREVIEWED',
+    ]);
+  });
+});
+
+describe('repair 3 — packet hash canonicalization, exact Codex collision classes', () => {
+  // Raw delimiter bytes, built numerically so no escape appears in source.
+  const D1 = String.fromCharCode(1);
+  const D2 = String.fromCharCode(2);
+  const D3 = String.fromCharCode(3);
+  const BACKSLASH = String.fromCharCode(92);
+
+  it('104 Codex collision 1: evidence-ref delimiter smuggling no longer collides', () => {
+    const smuggled = ['u', 'e', 'v', 'c', 'sc', 'o'].join(D1) + D2 + ['k', 's', 'u2'].join(D1);
+    const base: EvidenceRefView = { kind: 'k', scanId: 's', subjectUrl: 'u', engine: 'e',
+      engineVersion: 'v', contentSha256: 'c', scope: 'sc', observedAt: 'o' };
+    const crafted = [{ ...base, subjectUrl: smuggled }];
+    const genuine = [{ ...base, subjectUrl: 'u' }, { ...base, subjectUrl: 'u2' }];
+    expect(supportingEvidenceRefsDigest(crafted)).not.toBe(supportingEvidenceRefsDigest(genuine));
+    expect(normalizeRefs(crafted)).toHaveLength(1);
+    expect(normalizeRefs(genuine)).toHaveLength(2);
+    expect(reviewPacketHash({ ...ABOUT, evidenceRefs: crafted }))
+      .not.toBe(reviewPacketHash({ ...ABOUT, evidenceRefs: genuine }));
+  });
+
+  it('105 Codex collision 2: gate-trace delimiter and "=" no longer collide', () => {
+    const crafted = [{ gate: 'A=1' + D3 + 'B', passed: false }];
+    const genuine = [{ gate: 'A', passed: true }, { gate: 'B', passed: false }];
+    expect(gateTraceDigest(crafted)).not.toBe(gateTraceDigest(genuine));
+    expect(reviewPacketHash({ ...ABOUT, gateTrace: crafted }))
+      .not.toBe(reviewPacketHash({ ...ABOUT, gateTrace: genuine }));
+    // "=" alone, previously distinguished, still is
+    expect(gateTraceDigest([{ gate: 'G1=0', passed: true }]))
+      .not.toBe(gateTraceDigest([{ gate: 'G1', passed: false }]));
+  });
+
+  it('106 no delimiter byte in any ref field can imitate a field boundary', () => {
+    const base: EvidenceRefView = { kind: 'k', scanId: 's', subjectUrl: 'u', engine: 'e',
+      engineVersion: 'v', contentSha256: 'c', scope: 'sc', observedAt: 'o' };
+    const fields: (keyof EvidenceRefView)[] = ['kind', 'scanId', 'subjectUrl', 'engine', 'engineVersion', 'contentSha256', 'scope', 'observedAt'];
+    const seen = new Set<string>();
+    for (const f of fields) {
+      for (const d of [D1, D2, D3, '"', BACKSLASH, ',', ']', '=']) {
+        seen.add(supportingEvidenceRefsDigest([{ ...base, [f]: 'x' + d + 'y' }]));
+      }
+    }
+    // every injected variant is distinct from every other and from the baseline
+    expect(seen.size).toBe(fields.length * 8);
+    expect(seen.has(supportingEvidenceRefsDigest([base]))).toBe(false);
+  });
+
+  it('107 the frozen identity contract is unchanged by the new encoding', () => {
+    const keys = Object.keys(JSON.parse(canonicalPacketJson(ABOUT)));
+    expect(keys).toHaveLength(13);
+    expect(PACKET_HASH_INPUTS.filter(k => !keys.includes(k))).toHaveLength(0);
+    // display prose still excluded
+    expect(reviewPacketHash({ ...ABOUT, displayProse: 'entirely different prose' }))
+      .toBe(reviewPacketHash(ABOUT));
+    // same semantic packet hashes identically, and ordering stays irrelevant
+    expect(reviewPacketHash({ ...ABOUT })).toBe(reviewPacketHash(ABOUT));
+    expect(reviewPacketHash({ ...ABOUT, gateTrace: [...ABOUT.gateTrace].reverse() }))
+      .toBe(reviewPacketHash(ABOUT));
+    expect(reviewPacketHash({ ...ABOUT, evidenceRefs: [...ABOUT.evidenceRefs].reverse() }))
+      .toBe(reviewPacketHash(ABOUT));
+    // materially different packet still moves the hash
+    expect(reviewPacketHash({ ...ABOUT, claimHash: 'different' })).not.toBe(reviewPacketHash(ABOUT));
+  });
+
+  it('108 the hash change is bound to hra-0.1.1 and old decisions fail closed', () => {
+    expect(HRA_VERSION).toBe('hra-0.1.1');
+    const old = approval(ABOUT, { hraVersion: 'hra-0.1' });
+    const v = validateReviewDecision(old);
+    expect(v.valid).toBe(false);
+    expect(v.failures.map(f => f.code)).toContain('hra_version_mismatch');
+    expect(snap(ABOUT, old).snapshot).toBeNull();
+  });
+});
+
+describe('hardening — chronological decision ordering', () => {
+  it('109 18:00:00Z orders before 18:00:00.500Z', () => {
+    expect(normalizedDecisionTimestamp('2026-09-30T18:00:00Z')).toBe('2026-09-30T18:00:00.000Z');
+    expect(normalizedDecisionTimestamp('2026-09-30T18:00:00.500Z')).toBe('2026-09-30T18:00:00.500Z');
+    const noFrac = approval(ABOUT, { reviewDecisionId: 'D-noFrac', requestId: 'R-1', decisionTimestamp: '2026-09-30T18:00:00Z' });
+    const withFrac = approval(ABOUT, { reviewDecisionId: 'D-withFrac', requestId: 'R-2', decisionTimestamp: '2026-09-30T18:00:00.500Z' });
+    expect(validateReviewDecision(noFrac).valid).toBe(true);
+    expect(validateReviewDecision(withFrac).valid).toBe(true);
+    expect(orderDecisions([noFrac, withFrac]).map(d => d.reviewDecisionId)).toEqual(['D-noFrac', 'D-withFrac']);
+    expect(orderDecisions([withFrac, noFrac]).map(d => d.reviewDecisionId)).toEqual(['D-noFrac', 'D-withFrac']);
+    expect(deriveDecisionStatus([noFrac, withFrac], ABOUT).decisionId).toBe('D-withFrac');
+  });
+
+  it('110 equivalent instants with differing fractional precision tie-break deterministically', () => {
+    expect(normalizedDecisionTimestamp('2026-09-30T18:00:00.1Z'))
+      .toBe(normalizedDecisionTimestamp('2026-09-30T18:00:00.10Z'));
+    expect(normalizedDecisionTimestamp('2026-09-30T18:00:00.1Z')).toBe('2026-09-30T18:00:00.100Z');
+    const a = approval(ABOUT, { reviewDecisionId: 'D-1', requestId: 'R-1', decisionTimestamp: '2026-09-30T18:00:00.1Z' });
+    const b = approval(ABOUT, { reviewDecisionId: 'D-2', requestId: 'R-2', decisionTimestamp: '2026-09-30T18:00:00.100Z' });
+    // same instant, so the reviewDecisionId tie-break decides, in both input orders
+    expect(orderDecisions([a, b]).map(d => d.reviewDecisionId)).toEqual(['D-1', 'D-2']);
+    expect(orderDecisions([b, a]).map(d => d.reviewDecisionId)).toEqual(['D-1', 'D-2']);
+    // and .05Z precedes .1Z, which lexical comparison of raw strings also got right
+    expect(normalizedDecisionTimestamp('2026-09-30T18:00:00.05Z') < normalizedDecisionTimestamp('2026-09-30T18:00:00.1Z')).toBe(true);
+  });
+
+  it('111 ordering introduces no clock, randomness or ambient time', () => {
+    const src = productionCode();
+    for (const bad of ['Date.now(', 'new Date(', 'Math.random', 'randomUUID', 'performance.now']) {
+      expect(src, bad).not.toContain(bad);
+    }
+    const a = approval(ABOUT, { reviewDecisionId: 'D-1', requestId: 'R-1', decisionTimestamp: T('08:00') });
+    const b = approval(ABOUT, { reviewDecisionId: 'D-2', requestId: 'R-2', decisionTimestamp: T('09:00') });
+    const first = orderDecisions([b, a]).map(d => d.reviewDecisionId);
+    expect(orderDecisions([b, a]).map(d => d.reviewDecisionId)).toEqual(first);
+  });
+});
+
+describe('hardening — malformed packet identity fails closed before hashing', () => {
+  const REQUIRED = ['opportunityKey', 'evidenceFingerprint', 'claimHash', 'qualificationStatus',
+    'presentationPermission', 'presentationMode', 'demonstrabilityStatus', 'temporalFrame',
+    'reviewContractVersion', 'qualificationVersion'] as const;
+
+  it('112 an absent, undefined, null, empty or wrongly typed identity field throws', () => {
+    for (const field of REQUIRED) {
+      const absent = { ...ABOUT } as Record<string, unknown>;
+      delete absent[field];
+      expect(() => reviewPacketHash(absent as unknown as ReviewPacketView), `absent ${field}`)
+        .toThrow(InvalidPacketIdentityError);
+      for (const bad of [undefined, null, '', 42, {}]) {
+        expect(() => reviewPacketHash({ ...ABOUT, [field]: bad } as unknown as ReviewPacketView), `${field}=${String(bad)}`)
+          .toThrow(InvalidPacketIdentityError);
+      }
+    }
+  });
+
+  it('113 a non-boolean meetsScoutEvidenceRequirements throws rather than coercing', () => {
+    for (const bad of [undefined, null, 'true', 1, 0]) {
+      expect(() => reviewPacketHash({ ...ABOUT, meetsScoutEvidenceRequirements: bad } as unknown as ReviewPacketView))
+        .toThrow(InvalidPacketIdentityError);
+    }
+    // the previously colliding pair — absent versus explicit undefined — now both throw
+    const absent = { ...ABOUT } as Record<string, unknown>;
+    delete absent.presentationMode;
+    expect(() => canonicalPacketJson(absent as unknown as ReviewPacketView)).toThrow(/presentationMode/);
+    expect(() => canonicalPacketJson({ ...ABOUT, presentationMode: undefined } as unknown as ReviewPacketView))
+      .toThrow(/presentationMode/);
+  });
+
+  it('114 malformed gateTrace and evidenceRefs entries are rejected', () => {
+    const bad: [string, unknown][] = [
+      ['gateTrace not an array', { ...ABOUT, gateTrace: 'G1' }],
+      ['gate not a string', { ...ABOUT, gateTrace: [{ gate: 1, passed: true }] }],
+      ['gate empty', { ...ABOUT, gateTrace: [{ gate: '', passed: true }] }],
+      ['passed not boolean', { ...ABOUT, gateTrace: [{ gate: 'G1', passed: 'yes' }] }],
+      ['gate entry null', { ...ABOUT, gateTrace: [null] }],
+      ['evidenceRefs not an array', { ...ABOUT, evidenceRefs: {} }],
+      ['ref entry null', { ...ABOUT, evidenceRefs: [null] }],
+      ['ref subjectUrl missing', { ...ABOUT, evidenceRefs: [{ ...REF, subjectUrl: undefined }] }],
+      ['ref scope empty', { ...ABOUT, evidenceRefs: [{ ...REF, scope: '' }] }],
+      ['ref engine wrongly typed', { ...ABOUT, evidenceRefs: [{ ...REF, engine: 7 }] }],
+    ];
+    for (const [label, packet] of bad) {
+      expect(() => reviewPacketHash(packet as ReviewPacketView), label).toThrow(InvalidPacketIdentityError);
+    }
+    // a well-formed packet with explicit nulls on nullable ref fields is accepted
+    expect(() => reviewPacketHash({ ...ABOUT, evidenceRefs: [{ ...REF, engine: null, observedAt: null }] })).not.toThrow();
+  });
+});
+
+describe('hardening — snapshot immutability of approved truth', () => {
+  /** A detached packet, so mutating it cannot disturb the shared fixtures. */
+  function detached(): ReviewPacketView {
+    return JSON.parse(JSON.stringify(ABOUT)) as ReviewPacketView;
+  }
+
+  it('115 nested approved truth cannot be mutated through the snapshot', () => {
+    const packet = detached();
+    const s = snap(packet, approval(packet)).snapshot!;
+    expect(Object.isFrozen(s)).toBe(true);
+    expect(Object.isFrozen(s.canonicalClaim)).toBe(true);
+    expect(Object.isFrozen(s.demonstration)).toBe(true);
+    const claim = s.canonicalClaim as Record<string, unknown>;
+    const serialized = JSON.stringify(claim);
+    expect(() => { claim.injected = 'MUTATED'; }).toThrow(TypeError);
+    expect(claim.injected).toBeUndefined();
+    expect(JSON.stringify(s.canonicalClaim)).toBe(serialized);
+  });
+
+  it('116 mutating the original packet after derivation cannot change the snapshot', () => {
+    const packet = detached();
+    const s = snap(packet, approval(packet)).snapshot!;
+    const before = JSON.stringify(s.canonicalClaim);
+    const beforeDemo = JSON.stringify(s.demonstration);
+    // the snapshot must not alias the packet
+    expect(s.canonicalClaim).not.toBe(packet.canonicalClaim);
+    expect(s.demonstration).not.toBe(packet.demonstration);
+    (packet.canonicalClaim as Record<string, unknown>).subject = 'TAMPERED';
+    (packet.canonicalClaim as Record<string, unknown>).temporalFrame = 'AFTER';
+    (packet.demonstration as Record<string, unknown>).status = 'TAMPERED';
+    expect(JSON.stringify(s.canonicalClaim)).toBe(before);
+    expect(JSON.stringify(s.demonstration)).toBe(beforeDemo);
+    expect(JSON.stringify(s.canonicalClaim)).not.toContain('TAMPERED');
+  });
+
+  it('117 snapshot derivation stays deterministic', () => {
+    const p1 = detached();
+    const p2 = detached();
+    const a = approval(p1);
+    const s1 = snap(p1, a).snapshot!;
+    const s2 = snap(p2, approval(p2)).snapshot!;
+    expect(JSON.stringify(s1)).toBe(JSON.stringify(s2));
+    expect(s1.reviewPacketHash).toBe(s2.reviewPacketHash);
+    expect(s1.supportingEvidenceRefsDigest).toBe(s2.supportingEvidenceRefsDigest);
+  });
+
+  it('118 a non plain-JSON nested value fails closed rather than being flattened', () => {
+    const packet = detached();
+    (packet as unknown as Record<string, unknown>).canonicalClaim = new Map([['a', 1]]);
+    expect(() => snap(packet, approval(packet))).toThrow(/not a plain JSON-shaped object/);
   });
 });

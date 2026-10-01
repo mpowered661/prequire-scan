@@ -41,6 +41,36 @@ export function deterministicSnapshotId(
     .slice(0, 32);
 }
 
+/**
+ * Deep, detached, frozen copy of a nested approved value.
+ *
+ * A snapshot is immutable approved presentation truth, so it must not alias its
+ * input. `Object.freeze` alone is shallow: under hra-0.1 the snapshot's
+ * `canonicalClaim` was the very object the packet held, so mutating the packet
+ * after derivation retroactively changed the snapshot, and nested properties
+ * stayed writable through the snapshot itself.
+ *
+ * Object keys are copied in sorted order so the copy is deterministic. Only
+ * plain JSON-shaped values are accepted — exactly what or-0.1 produces — and
+ * anything else FAILS CLOSED rather than being silently flattened, which would
+ * lose approved content.
+ */
+function deepFrozenCopy(value: unknown, path = 'canonicalClaim'): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    return Object.freeze(value.map((v, i) => deepFrozenCopy(v, `${path}[${i}]`)));
+  }
+  if (Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new Error(`snapshot value at ${path} is not a plain JSON-shaped object; refusing to copy it`);
+  }
+  const source = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(source).sort()) {
+    out[key] = deepFrozenCopy(source[key], `${path}.${key}`);
+  }
+  return Object.freeze(out);
+}
+
 export interface SnapshotDerivationInput {
   packet: ReviewPacketView;
   decision: ReviewDecisionRecord;
@@ -105,11 +135,13 @@ export function derivePresentationSnapshotFromDecision(
     reviewPacketHash: decision.reviewPacketHash,
 
     // Carried through unchanged from or-0.1; never re-derived or re-worded.
-    canonicalClaim: packet.canonicalClaim,
+    // Deep-copied and deep-frozen so later mutation of the packet cannot
+    // retroactively alter approved truth.
+    canonicalClaim: deepFrozenCopy(packet.canonicalClaim, 'canonicalClaim'),
     reviewedProseHash: decision.reviewedProseHash,
     // References digest, not duplicated evidence payloads.
     supportingEvidenceRefsDigest: supportingEvidenceRefsDigest(packet.evidenceRefs),
-    demonstration: packet.demonstration,
+    demonstration: deepFrozenCopy(packet.demonstration, 'demonstration'),
 
     presentationMode: APPROVABLE_PRESENTATION_MODE,
     demonstrability: APPROVABLE_DEMONSTRABILITY,

@@ -1,6 +1,16 @@
 // Human Review & Approval v0.1 — frozen versions, vocabularies and bounds.
 
-export const HRA_VERSION = 'hra-0.1';
+/**
+ * hra-0.1.1 is a CONFORMANCE REPAIR of hra-0.1. The frozen architecture is
+ * unchanged; three implementation defects were corrected.
+ *
+ * review_packet_hash VALUES CHANGE in this version, because the canonical
+ * pre-hash encoding moved from unescaped delimiter concatenation to structural
+ * canonical JSON. A decision recorded under hra-0.1 therefore fails closed
+ * here: `validateReviewDecision` rejects it with `hra_version_mismatch` rather
+ * than comparing it against a differently-derived hash.
+ */
+export const HRA_VERSION = 'hra-0.1.1';
 
 /** The only approval capability in v0.1. */
 export const PRESENTATION_APPROVE_CAPABILITY = 'presentation.approve';

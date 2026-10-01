@@ -122,7 +122,7 @@ describe('Michael approval calibration — the 4 broken destinations are approva
       expect(result.snapshot!.presentationMode).toBe('STATEMENT_WITH_DEMONSTRATION');
       expect(result.snapshot!.demonstrability).toBe('DEMONSTRABLE');
       expect(result.snapshot!.temporalFrame).toBe('CURRENT_STATE');
-      expect(result.snapshot!.hraVersion).toBe('hra-0.1');
+      expect(result.snapshot!.hraVersion).toBe('hra-0.1.1');
       expect(result.snapshot!.sourceScanId).toBe('michael-pilot-001');
       expect(deriveSnapshotConsumability(result.snapshot!, packet, [decision]).status).toBe('CONSUMABLE');
     }
