@@ -508,10 +508,21 @@ describe('hydrated history is consumable by the frozen functions', () => {
     }
   });
 
-  it('26 this tranche creates no orchestration or HTTP layer', () => {
-    const files = productionSources().map(f => f.file);
-    expect(files).not.toContain('presentation-review-service.ts');
+  it('26 the history reader stays isolated from orchestration and HTTP concerns', () => {
+    // DURABLE INVARIANT. This asserts what review-history.ts IS, not which
+    // sibling files happen to exist beside it.
+    //
+    // It previously also asserted that presentation-review-service.ts did not
+    // exist. That encoded the Phase 2b-C1 boundary at a moment when no
+    // orchestration layer was authorized, and it became obsolete the moment
+    // Phase 2b-C2 was authorized to create exactly that file. Later phases may
+    // add orchestration (2b-C2) and an HTTP route (2b-C3) alongside the reader;
+    // what must never change is that neither leaks INTO the reader.
     const self = productionSources().find(f => f.file === 'review-history.ts')!;
+    // the reader must still be present and substantive, so this cannot pass by
+    // the file having been emptied or removed
+    expect(self.code).toContain('loadDecisionsForOpportunity');
+    expect(self.code.length).toBeGreaterThan(1000);
     for (const forbidden of ['NextResponse', 'NextRequest', 'next/server',
       'deriveReview', 'qualify(', 'toReviewPacketView', 'recordPresentationReview',
       'deriveApprovalEligibility', 'derivePresentationSnapshotFromDecision',
