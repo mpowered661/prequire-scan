@@ -527,7 +527,9 @@ create policy "service role can read presentation snapshots"
 --   QUALIFICATION_INPUT_HASH_MISMATCH the observation is not the one reviewed
 --   SNAPSHOT_REQUIRED_FOR_APPROVAL    approval without its snapshot
 --   SNAPSHOT_FORBIDDEN_FOR_DECISION   REJECT/REVOKE carrying a snapshot
---   SNAPSHOT_BINDING_MISMATCH         snapshot and decision disagree
+--   SNAPSHOT_BINDING_MISMATCH         snapshot and decision disagree on a
+--                                     shared inherited field; the response
+--                                     names it in 'field'
 --   REVOKE_TARGET_NOT_FOUND           revoking a decision that does not exist
 --   DECISION_TIMESTAMP_OUT_OF_BOUNDS  asserted time the database cannot have seen
 --   MALFORMED_INPUT                   a required field is absent or misshapen
@@ -555,6 +557,7 @@ declare
   v_skew           interval;
   v_snapshot_id    text;
   v_has_snapshot   boolean;
+  v_field          text;
 begin
   -- shape guards -----------------------------------------------------------
   if p_decision is null or jsonb_typeof(p_decision) <> 'object' then
@@ -692,27 +695,70 @@ begin
   end if;
 
   -- the pair must describe the same binding --------------------------------
+  -- SHARED INHERITED FIELD SET. Every field that (a) exists on BOTH
+  -- ReviewDecisionRecord and PresentationSnapshotRecord and (b) is copied
+  -- directly by derivePresentationSnapshotFromDecision must agree, or the two
+  -- immutable rows would disagree permanently with nothing able to repair them.
+  --
+  -- The frozen derivation sources these three ways, and all three are forced
+  -- equal to the decision before a snapshot can exist at all:
+  --   from the decision   reviewDecisionId, reviewPacketHash, reviewedProseHash
+  --   from the packet     opportunityKey, evidenceFingerprint, claimHash,
+  --                       reviewContractVersion, qualificationVersion
+  --                       -- compareBinding must return EXACT, which compares
+  --                       -- each of these decision-to-packet
+  --   frozen constants    presentationMode, demonstrability, temporalFrame,
+  --                       hraVersion
+  --                       -- validateReviewDecision pins the decision to the
+  --                       -- same constants, so equality is required
+  --
+  -- The list is EXPLICIT rather than a join over the two tables, so adding a
+  -- shared identity field later cannot silently escape this check: the field
+  -- has to be named here, and review_persistence.test.ts asserts this exact
+  -- set against the frozen types.
+  --
+  -- DELIBERATELY NOT PINNED, because they do not exist on the decision:
+  --   presentationSnapshotId, canonicalClaim, supportingEvidenceRefsDigest,
+  --   demonstration, observedAt  (sourceScanId is checked separately below,
+  --   against the observation actually being recorded).
+  --
+  -- This is internal consistency between two artifacts supplied by trusted
+  -- server code. It is NOT a reimplementation of HRA semantics: the database
+  -- never decides whether the decision was correct, only that the snapshot
+  -- it was handed belongs to that decision.
   if v_has_snapshot then
-    -- The snapshot must have been derived against THIS decision.
-    -- presentationSnapshotId is content-addressed on reviewDecisionId
-    -- (deterministicSnapshotId), so a snapshot built against a different
-    -- decision would be stored under a link that contradicts its own id.
-    -- The insert below uses the decision's real id either way, which is
-    -- exactly why the disagreement has to be caught here rather than relied
-    -- upon to surface later.
-    if (p_snapshot ->> 'reviewDecisionId') is distinct from (p_decision ->> 'reviewDecisionId') then
-      return jsonb_build_object('outcome', 'SNAPSHOT_BINDING_MISMATCH',
-        'detail', 'the snapshot was derived against a different decision id');
-    end if;
+    foreach v_field in array array[
+      'reviewDecisionId',
+      'opportunityKey',
+      'evidenceFingerprint',
+      'claimHash',
+      'reviewPacketHash',
+      'reviewedProseHash',
+      'presentationMode',
+      'demonstrability',
+      'temporalFrame',
+      'reviewContractVersion',
+      'qualificationVersion',
+      'hraVersion'
+    ]
+    loop
+      if (p_snapshot ->> v_field) is distinct from (p_decision ->> v_field) then
+        return jsonb_build_object(
+          'outcome', 'SNAPSHOT_BINDING_MISMATCH',
+          'detail', format(
+            'snapshot %s does not match the approving decision', v_field),
+          -- named so an operator does not have to diff two jsonb blobs
+          'field', v_field);
+      end if;
+    end loop;
 
-    if (p_snapshot ->> 'opportunityKey')      is distinct from (p_decision ->> 'opportunityKey')
-    or (p_snapshot ->> 'evidenceFingerprint') is distinct from (p_decision ->> 'evidenceFingerprint')
-    or (p_snapshot ->> 'claimHash')           is distinct from (p_decision ->> 'claimHash')
-    or (p_snapshot ->> 'reviewPacketHash')    is distinct from (p_decision ->> 'reviewPacketHash')
-    or (p_snapshot ->> 'sourceScanId')        is distinct from p_scan_id::text
-    then
-      return jsonb_build_object('outcome', 'SNAPSHOT_BINDING_MISMATCH',
-        'detail', 'snapshot and decision do not describe the same binding');
+    -- sourceScanId has no counterpart on the decision, so it is compared to the
+    -- observation this call is recording against.
+    if (p_snapshot ->> 'sourceScanId') is distinct from p_scan_id::text then
+      return jsonb_build_object(
+        'outcome', 'SNAPSHOT_BINDING_MISMATCH',
+        'detail', 'snapshot sourceScanId is not the observation being recorded',
+        'field', 'sourceScanId');
     end if;
   end if;
 

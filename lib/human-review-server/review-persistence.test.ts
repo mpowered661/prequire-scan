@@ -443,10 +443,83 @@ describe('migration 011 RPC', () => {
     expect(STATEMENTS).toContain('revoke all on function public.refuse_presentation_snapshot_mutation() from public;');
   });
 
-  it('21b the snapshot must have been derived against this exact decision', () => {
+  /**
+   * The field names the SQL actually pins, parsed out of the FOREACH array.
+   * Parsed rather than hard-coded, so these tests describe the migration as it
+   * is, not as it was when they were written.
+   */
+  function sqlPinnedFields(): string[] {
+    const m = /foreach v_field in array array\[([\s\S]*?)\]/.exec(STATEMENTS);
+    if (!m) throw new Error('the snapshot/decision consistency loop is missing');
+    return [...m[1].matchAll(/'([A-Za-z]+)'/g)].map(x => x[1]);
+  }
+
+  it('21b the SQL pins exactly the shared inherited field set, derived from the frozen artifacts', () => {
+    // Derived, not asserted from memory: build a real decision, run the frozen
+    // derivation, and take the intersection of the two records' own keys. Any
+    // field that exists on BOTH and is produced by the frozen derivation must
+    // be pinned -- so a shared identity field added to the types in future
+    // fails here until it is added to the migration.
+    const decision = approveDecision();
+    const snapshot = approveSnapshot(decision);
+    const shared = Object.keys(snapshot)
+      .filter(k => Object.prototype.hasOwnProperty.call(decision, k))
+      .sort();
+
+    expect(sqlPinnedFields().slice().sort()).toEqual(shared);
+
+    // Guard the guard: if the intersection ever collapses, this test would pass
+    // vacuously.
+    expect(shared.length).toBe(12);
+  });
+
+  it('21c every pinned field really is inherited from the approving decision', () => {
+    // Justifies pinning: the frozen derivation gives the snapshot the SAME
+    // value as the decision for each of these, so requiring equality cannot
+    // reject a legitimately derived snapshot.
+    const decision = approveDecision() as unknown as Record<string, unknown>;
+    const snapshot = approveSnapshot(approveDecision()) as unknown as Record<string, unknown>;
+    for (const field of sqlPinnedFields()) {
+      expect(snapshot[field], field).toBe(decision[field]);
+    }
+  });
+
+  it('21d the four fields MEDIUM-1 identified are now pinned by name', () => {
+    // reviewedProseHash is the audit link to the exact prose the human saw; the
+    // three versions pin the contract the snapshot was derived under. All four
+    // were recorded with mismatched values before this fix.
+    for (const field of ['reviewedProseHash', 'reviewContractVersion',
+      'qualificationVersion', 'hraVersion']) {
+      expect(sqlPinnedFields(), field).toContain(field);
+    }
+    // 'humanReviewVersion' is not a field in this system; the frozen name is
+    // hraVersion. No alias is introduced.
+    expect(STATEMENTS).not.toContain('humanReviewVersion');
+  });
+
+  it('21e snapshot-specific fields are deliberately NOT pinned', () => {
+    // Pinning these would reject legitimate snapshots: they have no counterpart
+    // on the decision at all.
+    for (const field of ['presentationSnapshotId', 'canonicalClaim',
+      'supportingEvidenceRefsDigest', 'demonstration', 'observedAt']) {
+      expect(sqlPinnedFields(), field).not.toContain(field);
+    }
+    // sourceScanId is checked, but against the observation being recorded --
+    // not against the decision, which has no such field.
+    expect(sqlPinnedFields()).not.toContain('sourceScanId');
     expect(STATEMENTS).toContain(
-      "if (p_snapshot ->> 'reviewDecisionId') is distinct from (p_decision ->> 'reviewDecisionId') then");
-    expect(STATEMENTS).toContain('the snapshot was derived against a different decision id');
+      "if (p_snapshot ->> 'sourceScanId') is distinct from p_scan_id::text then");
+  });
+
+  it('21f a mismatch on any pinned field is one stable code, not one code per field', () => {
+    const codes = (STATEMENTS.match(/'SNAPSHOT_[A-Z_]+'/g) ?? []);
+    expect(new Set(codes)).toEqual(new Set([
+      "'SNAPSHOT_BINDING_MISMATCH'",
+      "'SNAPSHOT_REQUIRED_FOR_APPROVAL'",
+      "'SNAPSHOT_FORBIDDEN_FOR_DECISION'",
+    ]));
+    // and the refusing field is reported rather than left for a jsonb diff
+    expect(STATEMENTS).toContain("'field', v_field");
   });
 
   it('22 rechecks the immutable qualification input identity inside the write', () => {
