@@ -8,6 +8,8 @@ import { EmailReportForm } from '@/components/EmailReportForm';
 import { ExtractionResiliencePanel } from '@/components/ExtractionResiliencePanel';
 import { CATEGORIES, scoreLabel, scoreBand } from '@/lib/scanUtils';
 import { track } from '@/lib/track';
+import { getTurnstileToken } from '@/lib/turnstile';
+import { classifyDelivery, networkDeliveryFailure, parseRetryAfter, type DeliveryOutcome } from '@/lib/report-delivery';
 
 // ── Streaming progress ───────────────────────────────────────
 const STAGES = [
@@ -80,6 +82,8 @@ function ScanPageInner() {
   const [scanId, setScanId] = useState<string | null>(null);
   const [streamStage, setStreamStage] = useState<StageKey | null>(null);
   const [streamMessage, setStreamMessage] = useState('');
+  // Outcome of the emailed-report request made on behalf of ?email=
+  const [delivery, setDelivery] = useState<DeliveryOutcome | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const autoRanRef = useRef(false);
 
@@ -166,16 +170,45 @@ function ScanPageInner() {
             // (Sprint 1 T4) — without it the cron re-scans with a second engine
             // and the emailed score can contradict the on-screen one.
             if (pubEmail) {
-              fetch('https://app.prequire.ai/api/audit/public-audit.php', {
-                method:  'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({
-                  url: payload.url,
-                  email: pubEmail,
-                  name: pubName,
-                  scan_id: payload.scan_id ?? null,
-                }),
-              }).catch(() => {});
+              // Was: .catch(() => {}) — a refusal was invisible and the person
+              // waited for an email that was never going to arrive. The outcome
+              // is now classified and announced.
+              void (async () => {
+                const turnstileToken = await getTurnstileToken();
+                try {
+                  const res = await fetch('https://app.prequire.ai/api/audit/public-audit.php', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({
+                      url: payload.url,
+                      email: pubEmail,
+                      name: pubName,
+                      scan_id: payload.scan_id ?? null,
+                      turnstileToken,
+                    }),
+                  });
+                  const body = await res.json().catch(() => null);
+                  const outcome = classifyDelivery(
+                    res.status,
+                    parseRetryAfter(res.headers.get('Retry-After')),
+                    body,
+                  );
+                  setDelivery(outcome);
+                  track(outcome.ok ? 'report_delivery_succeeded' : 'report_delivery_failed', {
+                    surface: 'scan',
+                    ...(payload.scan_id ? { scan_id: payload.scan_id } : {}),
+                    ...(outcome.ok ? {} : { reason: outcome.reason }),
+                  });
+                } catch {
+                  const outcome = networkDeliveryFailure();
+                  setDelivery(outcome);
+                  track('report_delivery_failed', {
+                    surface: 'scan',
+                    ...(payload.scan_id ? { scan_id: payload.scan_id } : {}),
+                    reason: outcome.reason,
+                  });
+                }
+              })();
             }
             return;
           }
@@ -265,6 +298,40 @@ function ScanPageInner() {
       {/* Results */}
       {result && (
         <section ref={resultsRef} className="max-w-5xl mx-auto px-4 pb-20">
+          {/* Emailed-report delivery notice.
+              TWO live regions, both always present in the DOM so an update is
+              announced rather than missed: assertive for an actionable failure,
+              polite for confirmation. Role is never swapped at runtime, and the
+              two never fill at the same time, so nothing is double-announced.
+              Meaning is carried by the leading text label, never by colour or
+              by the decorative icon. */}
+          <div aria-live="assertive" aria-atomic="true">
+            {delivery && !delivery.ok && (
+              <div className="mb-6 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+                <p className="flex items-start gap-2">
+                  <span aria-hidden="true" className="mt-px">!</span>
+                  <span>
+                    <strong className="font-semibold">Report email not sent.</strong>{' '}
+                    {delivery.message}
+                  </span>
+                </p>
+              </div>
+            )}
+          </div>
+          <div aria-live="polite" aria-atomic="true">
+            {delivery && delivery.ok && (
+              <div className="mb-6 rounded-xl border border-slate-700 bg-slate-800/40 px-4 py-3 text-sm text-slate-200">
+                <p>
+                  <strong className="font-semibold">Report email queued.</strong>{' '}
+                  Check your inbox shortly
+                  {delivery.deduped
+                    ? ' — this site was audited recently, so we are sending that result rather than re-running the scan'
+                    : ''}
+                  .
+                </p>
+              </div>
+            )}
+          </div>
           {/* Score hero card */}
           <div className="bg-[#0d1525] border border-slate-800 rounded-2xl p-8 mb-8 flex flex-col sm:flex-row items-center gap-8">
             <ScoreGauge score={result.overallScore} />

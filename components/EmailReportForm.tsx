@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { track } from '@/lib/track';
+import { getTurnstileToken } from '@/lib/turnstile';
+import { classifyDelivery, networkDeliveryFailure, parseRetryAfter, type DeliveryOutcome } from '@/lib/report-delivery';
 
 // Optional email-report capture. Renders AFTER the scan result is already on
 // screen — it never gates anything, and every failure path leaves the visible
@@ -27,7 +29,7 @@ interface Props {
 type FormState =
   | { phase: 'idle' }
   | { phase: 'submitting' }
-  | { phase: 'done'; duplicate: boolean; deliveryFailed: boolean }
+  | { phase: 'done'; duplicate: boolean; delivery: DeliveryOutcome | null }
   | { phase: 'error'; message: string };
 
 const SUBMITTED_KEY = 'pq_report_emailed';
@@ -119,8 +121,11 @@ export function EmailReportForm({ url, score, surface, meta, utm }: Props) {
     // (app.prequire.ai → cron → GHL with Resend fallback). A duplicate never
     // queues a second email. A queue failure is reported honestly but the
     // capture above already succeeded and the scan stays valid.
-    let deliveryFailed = false;
+    let delivery: DeliveryOutcome | null = null;
     if (!duplicate) {
+      // The server refuses a request with no token; an undefined token here
+      // becomes an explained refusal rather than a silent non-delivery.
+      const turnstileToken = await getTurnstileToken();
       try {
         const res = await fetch('https://app.prequire.ai/api/audit/public-audit.php', {
           method: 'POST',
@@ -130,35 +135,44 @@ export function EmailReportForm({ url, score, surface, meta, utm }: Props) {
             email: trimmed,
             name: '',
             scan_id: meta?.scan_id ?? null,
+            turnstileToken,
           }),
         });
-        deliveryFailed = !res.ok;
+        const payload = await res.json().catch(() => null);
+        delivery = classifyDelivery(res.status, parseRetryAfter(res.headers.get('Retry-After')), payload);
       } catch {
-        deliveryFailed = true;
+        delivery = networkDeliveryFailure();
       }
-      track(deliveryFailed ? 'report_delivery_failed' : 'report_delivery_succeeded', {
+      track(delivery.ok ? 'report_delivery_succeeded' : 'report_delivery_failed', {
         surface,
         ...(meta?.scan_id ? { scan_id: meta.scan_id } : {}),
+        ...(delivery.ok ? {} : { reason: delivery.reason }),
       });
     }
 
     markSubmitted(url);
-    setState({ phase: 'done', duplicate, deliveryFailed });
+    setState({ phase: 'done', duplicate, delivery });
   }
 
   if (state.phase === 'done') {
+    const failed = state.delivery !== null && !state.delivery.ok;
     return (
       <div
-        role="status"
+        // This block replaces the form, so the region is inserted at the same
+        // moment as its text. role="alert" is announced on insertion, which a
+        // bare aria-live region is not reliably; no redundant aria-live is set,
+        // because each role already implies its politeness. A failure is
+        // actionable, so it gets the assertive role. Meaning is carried by the
+        // leading text label, never by colour.
+        role={failed ? 'alert' : 'status'}
         className="bg-[#0d1525] border border-slate-800 rounded-2xl p-5 text-sm text-slate-300"
       >
         {state.duplicate ? (
           <p>You already requested this report — it&apos;s on its way to your inbox.</p>
-        ) : state.deliveryFailed ? (
+        ) : failed ? (
           <p>
-            Your request is saved, but queuing the email hit a snag. Your result stays
-            available on this page{meta?.scan_id ? ' and at the shareable report link' : ''} —
-            we&apos;ll retry delivery.
+            <strong className="font-semibold text-slate-100">Email not sent.</strong>{' '}
+            {state.delivery && !state.delivery.ok ? state.delivery.message : ''}
           </p>
         ) : (
           <p>Report requested — check your inbox shortly for the full breakdown and recommended next steps.</p>
