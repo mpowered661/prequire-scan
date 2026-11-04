@@ -5,6 +5,7 @@ import type {
   ResilienceStatus,
   ResilienceMeasure,
 } from './types';
+import { crossCheckableSchemaValues } from './measures';
 
 // The deterministic check set. Every status is derived from EXTRACT_A and the
 // A/B comparison — no model participates, and nothing here is inferred from
@@ -171,6 +172,16 @@ export function runChecks(
     checks.push(
       check('schema_body_contradiction', 'Structured data agrees with the page', 'not_applicable',
         'This page carries no structured data.'),
+    );
+  } else if (crossCheckableSchemaValues(a).length === 0) {
+    // Structured data is present, but it declares no value this check can
+    // cross-reference against the visible text (it compares price-like values
+    // that the page also states). With nothing comparable, "agrees with the
+    // page" is undeterminable — not a pass. Mirrors the entity_consistency
+    // check below, which is already undeterminable when no name signal exists.
+    checks.push(
+      check('schema_body_contradiction', 'Structured data agrees with the page', 'undeterminable',
+        'This page has structured data, but it declares no values that can be cross-referenced against its visible text, so agreement cannot be assessed.'),
     );
   } else {
     checks.push(

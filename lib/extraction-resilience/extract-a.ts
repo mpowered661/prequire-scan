@@ -1,4 +1,5 @@
 import { extractJsonLd } from '@/lib/scanPrompt';
+import { ORGANIZATION_TYPES_LOWER } from '@/lib/schema-org/organization-types.generated';
 import {
   parseHtml,
   findAll,
@@ -59,9 +60,17 @@ const GENERIC_TITLES = new Set([
   'new page', 'default',
 ]);
 
-const ORG_TYPES = new Set([
-  'organization', 'localbusiness', 'corporation', 'ngo', 'educationalorganization',
-  'governmentorganization', 'medicalorganization', 'onlinebusiness', 'brand',
+// A node carries a business name when its @type is a schema.org Organization —
+// ANY subtype in the maintained closure (LocalBusiness, ProfessionalService,
+// HVACBusiness, Dentist, Plumber, …), generated from the schema.org vocabulary
+// by scripts/gen-schema-org-types.mjs. The previous hand-kept list omitted the
+// LocalBusiness leaf subtypes, so a correctly-marked-up trades or professional
+// business had its name dropped and identity fell back to the page title.
+// 'brand' is kept explicitly: Brand is an Intangible, not an Organization, but a
+// named Brand was already honored here and stays a usable business-name signal.
+const ORG_NAME_TYPES: ReadonlySet<string> = new Set([
+  ...ORGANIZATION_TYPES_LOWER,
+  'brand',
 ]);
 
 const TITLE_SEPARATOR = /\s[|–—·»]\s/;
@@ -151,7 +160,7 @@ function buildSchemaModel(rawHtml: string): SchemaModel {
       (t): t is string => typeof t === 'string',
     );
     const name = typeof obj.name === 'string' ? obj.name.trim() : null;
-    if (name && typeList.some((t) => ORG_TYPES.has(t.toLowerCase()))) {
+    if (name && typeList.some((t) => ORG_NAME_TYPES.has(t.toLowerCase()))) {
       if (!organizationNames.includes(name)) organizationNames.push(name);
     }
     for (const [key, val] of Object.entries(obj)) {
