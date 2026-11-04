@@ -174,9 +174,18 @@ function countUndeterminableVisuals(a: StructuredExtraction): number {
   return n;
 }
 
-function detectContradictions(a: StructuredExtraction): Contradiction[] {
-  const out: Contradiction[] = [];
-
+// Declared structured-data values this tool can actually cross-check against
+// the page: a price-like key, a parseable number, AND at least one body
+// statement of the same kind to compare it with. These are the ONLY values a
+// "structured data agrees with the page" verdict can rest on — a page whose
+// structured data declares none of them has given this check nothing to
+// compare, so agreement is undeterminable, not confirmed (see checks.ts,
+// check 6). Exported so detectContradictions and that check cannot drift apart
+// on what "comparable" means.
+export function crossCheckableSchemaValues(
+  a: StructuredExtraction,
+): { path: string; declaredNum: string; matching: ValueBinding[] }[] {
+  const out: { path: string; declaredNum: string; matching: ValueBinding[] }[] = [];
   for (const declared of a.schema.declaredValues) {
     const key = declared.path.split('.').pop()?.toLowerCase() ?? '';
     if (!PRICE_KEYS.some((k) => key.includes(k))) continue;
@@ -194,13 +203,22 @@ function detectContradictions(a: StructuredExtraction): Contradiction[] {
       (b) => b.label && b.label.toLowerCase().includes(needle),
     );
     if (matching.length === 0) continue;
+    out.push({ path: declared.path, declaredNum, matching });
+  }
+  return out;
+}
+
+function detectContradictions(a: StructuredExtraction): Contradiction[] {
+  const out: Contradiction[] = [];
+
+  for (const { path, declaredNum, matching } of crossCheckableSchemaValues(a)) {
     if (matching.some((b) => b.value === declaredNum)) continue;
 
     const shown = matching[0];
     out.push({
       kind: 'schema_body_value',
-      detail: `Structured data declares ${declared.path} as ${declaredNum}, but the page states "${shown.label}" as ${shown.value}.`,
-      left: `${declared.path}=${declaredNum}`,
+      detail: `Structured data declares ${path} as ${declaredNum}, but the page states "${shown.label}" as ${shown.value}.`,
+      left: `${path}=${declaredNum}`,
       right: `${shown.label}=${shown.value}`,
       important: true,
     });
