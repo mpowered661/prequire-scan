@@ -1,13 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { createHash } from 'crypto';
 import { buildReport } from '@/lib/aeo-readiness/report-builder';
 import { resolveStudyAuth } from '@/lib/study';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
+import { getServiceClient } from '@/lib/supabase/serviceClient';
 
 const ANON_HOURLY  = 5;
 const ANON_DAILY   = 25;
@@ -28,6 +23,7 @@ async function checkRateLimit(
   ipHash: string,
   userId: string | null,
 ): Promise<{ allowed: boolean; reason?: string }> {
+  const supabase = getServiceClient();
   const now = Date.now();
   const oneHourAgo = new Date(now - 60 * 60 * 1000).toISOString();
   const oneDayAgo  = new Date(now - 24 * 60 * 60 * 1000).toISOString();
@@ -122,6 +118,11 @@ export async function POST(req: NextRequest) {
         report,
       });
     }
+
+    // Service-role client is created here — after the study-mode early return,
+    // so study mode keeps working without SUPABASE_SERVICE_ROLE_KEY, and never
+    // at module import (so `next build` does not require the key).
+    const supabase = getServiceClient();
 
     // Optional JWT auth — unauthenticated requests are accepted but rate-limited more tightly
     let userId: string | null = null;
