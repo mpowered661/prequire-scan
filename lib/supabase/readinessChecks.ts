@@ -1,10 +1,5 @@
-import { createClient } from '@supabase/supabase-js';
+import { getServiceClient } from '@/lib/supabase/serviceClient';
 import type { AeoReadinessReport } from '@/lib/aeo-readiness/types';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
 
 export interface ReadinessCheckRow {
   check_id: string;
@@ -15,6 +10,7 @@ export interface ReadinessCheckRow {
 }
 
 export async function getReadinessCheck(checkId: string): Promise<ReadinessCheckRow | null> {
+  const supabase = getServiceClient();
   const { data, error } = await supabase
     .from('aeo_readiness_checks')
     .select('check_id, url, score, report, tested_at')

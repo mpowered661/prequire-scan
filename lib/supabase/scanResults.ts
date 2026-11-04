@@ -1,10 +1,5 @@
-import { createClient } from '@supabase/supabase-js';
+import { getServiceClient } from '@/lib/supabase/serviceClient';
 import { ScanResult } from '@/lib/scanPrompt';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
 
 export interface ScanResultData {
   url: string;
@@ -16,6 +11,7 @@ export interface ScanResultData {
 }
 
 export async function saveScanResult(data: ScanResultData): Promise<string> {
+  const supabase = getServiceClient();
   const { data: row, error } = await supabase
     .from('scan_results')
     .insert({
@@ -44,6 +40,7 @@ export async function getScanResult(scanId: string): Promise<{
   result_json: ScanResult;
   created_at: string;
 } | null> {
+  const supabase = getServiceClient();
   const { data, error } = await supabase
     .from('scan_results')
     .select('scan_id, url, overall_score, result_json, created_at')
