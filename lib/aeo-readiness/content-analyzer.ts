@@ -64,7 +64,13 @@ export function analyzeContentDelivery(body: string): ContentDeliveryResult {
     status = 'empty';
   } else if (js_challenge_detected) {
     status = 'js_challenge';
-  } else if (text_html_ratio < 0.05) {
+  } else if (text_html_ratio < 0.05 && !content_appears_rendered) {
+    // A low text-to-HTML ratio alone does not mean the page is client-side
+    // rendered: heavy page builders (Divi, Elementor) emit so much inline CSS
+    // and markup that server-rendered pages fall below the ratio while their
+    // content IS present. Only call it client_side_rendered when the ratio is
+    // low AND no rendered content (article/main/h1/substantial paragraphs) is
+    // in the served HTML — otherwise the content is there and status stays ok.
     status = 'client_side_rendered';
   }
 
