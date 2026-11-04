@@ -1,10 +1,5 @@
-import { createClient } from '@supabase/supabase-js';
+import { getServiceClient } from '@/lib/supabase/serviceClient';
 import type { ScoreBand } from '@/lib/scanUtils';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
 
 // Email-report capture (Lead Capture sprint). Distinct from logScanLead —
 // that records every scan anonymously; this records an explicit, consented
@@ -74,6 +69,7 @@ export async function captureLead(input: CaptureLeadInput): Promise<CaptureLeadO
   const email = input.email.trim().toLowerCase();
 
   try {
+    const supabase = getServiceClient();
     // Duplicate prevention: same email + url inside the window is idempotent
     // success — no second row, and the caller must not queue a second email.
     const windowStart = new Date(Date.now() - DEDUPE_WINDOW_HOURS * 3600 * 1000).toISOString();

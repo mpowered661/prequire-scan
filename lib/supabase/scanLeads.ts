@@ -1,9 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
+import { getServiceClient } from '@/lib/supabase/serviceClient';
 
 export interface ScanLeadData {
   url: string;
@@ -43,6 +38,7 @@ export async function logScanLead(data: ScanLeadData): Promise<LogScanLeadResult
   };
 
   try {
+    const supabase = getServiceClient();
     const { error } = await supabase.from('scan_leads').insert(payload);
 
     if (error) {
