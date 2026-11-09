@@ -238,12 +238,12 @@ function OverviewPageInner() {
           </a>
           {combinedScore !== null && (
             <div className="flex items-center gap-2">
-              <span className="text-xs font-mono text-slate-500 uppercase tracking-wider">
+              <span className="text-xs font-mono text-slate-400 uppercase tracking-wider">
                 Prequire AEO Score
               </span>
               <span className={`text-xl font-bold font-mono ${scoreColor(combinedScore)}`}>
                 {combinedScore}
-                <span className="text-sm text-slate-500">/100</span>
+                <span className="text-sm text-slate-400">/100</span>
               </span>
             </div>
           )}
@@ -253,8 +253,8 @@ function OverviewPageInner() {
       <div className="max-w-4xl mx-auto px-4 py-10 space-y-6">
         {/* URL header */}
         <div>
-          <p className="text-xs font-mono text-slate-500 uppercase tracking-wider mb-1">Scanning</p>
-          <p className="text-lg font-mono text-slate-200 truncate">{hostname}</p>
+          <p className="text-xs font-mono text-slate-400 uppercase tracking-wider mb-1">Scanning</p>
+          <h1 className="text-lg font-mono text-slate-200 truncate">{hostname}</h1>
         </div>
 
         {/* Combined score hero (once both are done) */}
@@ -264,14 +264,14 @@ function OverviewPageInner() {
               <div className={`text-5xl font-bold font-mono ${scoreColor(combinedScore)}`}>
                 {combinedScore}
               </div>
-              <div className="text-xs text-slate-500 mt-1">/ 100</div>
+              <div className="text-xs text-slate-400 mt-1">/ 100</div>
             </div>
             <div>
               <p className={`text-lg font-semibold ${scoreColor(combinedScore)}`}>
                 {scoreLabel(combinedScore)}
               </p>
               <p className="text-sm text-slate-400 mt-0.5">Prequire AEO Score</p>
-              <p className="text-xs text-slate-600 mt-1">50/50 average of Visibility + Citation</p>
+              <p className="text-xs text-slate-400 mt-1">50/50 average of Visibility + Citation</p>
             </div>
           </div>
         )}
@@ -289,7 +289,7 @@ function OverviewPageInner() {
             </div>
 
             {vis.status === 'idle' && (
-              <div className="flex items-center gap-2 text-slate-500 text-sm">
+              <div className="flex items-center gap-2 text-slate-400 text-sm">
                 <Spinner />
                 <span>Starting…</span>
               </div>
@@ -325,7 +325,7 @@ function OverviewPageInner() {
                           <span className="text-4xl font-bold font-mono text-slate-400">—</span>
                           <span className="text-slate-400 text-sm pb-1">Undeterminable</span>
                         </div>
-                        <p className="text-xs text-slate-500 mt-1">
+                        <p className="text-xs text-slate-400 mt-1">
                           {surface.undeterminable} of {surface.total} crawlers could not be verified by UA simulation
                           {surface.determinable > 0 &&
                             ` — determinable signals: ${vis.score}/100 (${surface.determinable} of ${surface.total})`}
@@ -339,7 +339,7 @@ function OverviewPageInner() {
                         <span className={`text-4xl font-bold font-mono ${scoreColor(vis.score)}`}>
                           {vis.score}
                         </span>
-                        <span className="text-slate-500 text-sm pb-1">/ 100</span>
+                        <span className="text-slate-400 text-sm pb-1">/ 100</span>
                         <span className={`text-sm pb-1 ${scoreColor(vis.score)}`}>
                           {scoreLabel(vis.score)}
                         </span>
@@ -363,7 +363,7 @@ function OverviewPageInner() {
                   ].map(({ label, val, color }) => (
                     <div key={label} className="bg-slate-800/50 rounded-lg py-2">
                       <div className={`text-xl font-bold font-mono ${color}`}>{val}</div>
-                      <div className="text-xs text-slate-500">{label}</div>
+                      <div className="text-xs text-slate-400">{label}</div>
                     </div>
                   ))}
                 </div>
@@ -438,7 +438,7 @@ function OverviewPageInner() {
                   <span className={`text-4xl font-bold font-mono ${scoreColor(cit.score)}`}>
                     {cit.score}
                   </span>
-                  <span className="text-slate-500 text-sm pb-1">/ 100</span>
+                  <span className="text-slate-400 text-sm pb-1">/ 100</span>
                   <span className={`text-sm pb-1 ${scoreColor(cit.score)}`}>
                     {scoreLabel(cit.score)}
                   </span>
@@ -456,7 +456,7 @@ function OverviewPageInner() {
                       };
                       return (
                         <div key={key} className="flex items-center gap-3">
-                          <span className="text-xs text-slate-500 w-32 shrink-0">{labels[key] ?? key}</span>
+                          <span className="text-xs text-slate-400 w-32 shrink-0">{labels[key] ?? key}</span>
                           <div className="flex-1 bg-slate-800 rounded-full h-1.5">
                             <div
                               className={`h-1.5 rounded-full ${cat.score >= 80 ? 'bg-green-500' : cat.score >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
@@ -486,7 +486,7 @@ function OverviewPageInner() {
                     Full citation report →
                   </a>
                 ) : (
-                  <p className="text-xs text-slate-600">Full report unavailable (save failed)</p>
+                  <p className="text-xs text-slate-400">Full report unavailable (save failed)</p>
                 )}
               </div>
             )}
@@ -496,7 +496,7 @@ function OverviewPageInner() {
         {/* Summary blurb (once both done) */}
         {cit.status === 'done' && (
           <div className="bg-[#0d1525] border border-slate-800 rounded-2xl p-5">
-            <p className="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Summary</p>
+            <p className="text-xs font-mono text-slate-400 uppercase tracking-wider mb-2">Summary</p>
             <p className="text-sm text-slate-300 leading-relaxed">{cit.result.summary}</p>
           </div>
         )}

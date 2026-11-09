@@ -195,7 +195,7 @@ export function EmailReportForm({ url, score, surface, meta, utm }: Props) {
         <button
           type="submit"
           disabled={state.phase === 'submitting'}
-          className="bg-orange-500 hover:bg-orange-400 disabled:bg-orange-500/40 disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm whitespace-nowrap"
+          className="bg-orange-500 hover:bg-orange-400 disabled:bg-orange-500/40 disabled:cursor-not-allowed text-slate-950 font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm whitespace-nowrap"
         >
           {state.phase === 'submitting' ? 'Sending…' : 'Email my report'}
         </button>
@@ -205,7 +205,7 @@ export function EmailReportForm({ url, score, surface, meta, utm }: Props) {
           {state.message}
         </p>
       )}
-      <p id="report-email-consent" className="mt-3 text-xs text-slate-500">
+      <p id="report-email-consent" className="mt-3 text-xs text-slate-400">
         By submitting, you agree to receive this report and occasional Prequire emails.
         Unsubscribe anytime. No phone number required — we never send SMS.
       </p>
