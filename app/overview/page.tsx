@@ -8,6 +8,7 @@ import { scoreSurface } from '@/lib/aeo-readiness/score-surface';
 import { EmailReportForm } from '@/components/EmailReportForm';
 import { scoreBand } from '@/lib/scanUtils';
 import { track } from '@/lib/track';
+import { reportJobFor, queueEmailReport } from '@/lib/reportQueue';
 
 const PASSTHROUGH = ['email', 'name', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const;
 
@@ -64,6 +65,7 @@ function OverviewPageInner() {
   const [vis, setVis] = useState<VisibilityState>({ status: 'idle' });
   const [cit, setCit] = useState<CitationState>({ status: 'idle' });
   const hasRun = useRef(false);
+  const reportQueued = useRef(false);
 
   function buildPassthrough(): Record<string, string> {
     const out: Record<string, string> = {};
@@ -165,6 +167,27 @@ function OverviewPageInner() {
     runCitation(url);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Visitors who arrived with ?email= (the prequire.ai homepage form) were promised
+  // the report by email and are not shown the email form below, so queue it here.
+  useEffect(() => {
+    if (cit.status !== 'done' || reportQueued.current) return;
+    const job = reportJobFor({
+      email: searchParams.get('email'),
+      name: searchParams.get('name'),
+      url: cit.url,
+      scanId: cit.scanId,
+    });
+    if (!job) return;
+    reportQueued.current = true;
+    queueEmailReport(job).then((ok) => {
+      track(ok ? 'report_delivery_succeeded' : 'report_delivery_failed', {
+        surface: 'overview',
+        ...(cit.scanId ? { scan_id: cit.scanId } : {}),
+      });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cit]);
 
   const hostname = (() => {
     try {
@@ -463,8 +486,8 @@ function OverviewPageInner() {
         )}
 
         {/* Optional email capture — results above stay fully visible either way.
-            Visitors who arrived with an email param already have the report
-            queued by the /scan flow and don't need a second prompt. */}
+            Visitors who arrived with an email param have the report queued by
+            the effect above and don't need a second prompt. */}
         {cit.status === 'done' && !searchParams.get('email') && (
           <EmailReportForm
             url={cit.url}
