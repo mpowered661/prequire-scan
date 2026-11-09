@@ -170,3 +170,24 @@ describe('captureLead', () => {
     expect(outcome).toEqual({ ok: false, code: 'transport' });
   });
 });
+
+describe('consent source and scope (report consent is never widened into marketing)', () => {
+  it('defaults to the scanner form, whose wording covers the report and occasional emails', async () => {
+    const { buildLeadRow: build } = await import('./captureLead');
+    const r = build(INPUT, '2026-11-09T00:00:00.000Z');
+    expect(r.capture_meta).toMatchObject({ consent_source: 'scan_email_report_v1', consent_scope: 'report_and_occasional_emails' });
+  });
+
+  it('records the homepage form as report-only consent', async () => {
+    const { buildLeadRow: build } = await import('./captureLead');
+    const r = build({ ...INPUT, consent_source: 'homepage_audit_form_v1' }, '2026-11-09T00:00:00.000Z');
+    expect(r.capture_meta).toMatchObject({ consent_source: 'homepage_audit_form_v1', consent_scope: 'report_only' });
+  });
+
+  it('a client cannot invent a source or scope', async () => {
+    const { toConsentSource } = await import('./captureLead');
+    expect(toConsentSource('marketing_all_v9')).toBe('scan_email_report_v1');
+    expect(toConsentSource(undefined)).toBe('scan_email_report_v1');
+    expect(toConsentSource('homepage_audit_form_v1')).toBe('homepage_audit_form_v1');
+  });
+});

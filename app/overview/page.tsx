@@ -8,7 +8,7 @@ import { scoreSurface } from '@/lib/aeo-readiness/score-surface';
 import { EmailReportForm } from '@/components/EmailReportForm';
 import { scoreBand } from '@/lib/scanUtils';
 import { track } from '@/lib/track';
-import { reportJobFor, queueEmailReport } from '@/lib/reportQueue';
+import { requestHomepageReport, type ReportRequestOutcome } from '@/lib/reportQueue';
 
 const PASSTHROUGH = ['email', 'name', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const;
 
@@ -65,7 +65,9 @@ function OverviewPageInner() {
   const [vis, setVis] = useState<VisibilityState>({ status: 'idle' });
   const [cit, setCit] = useState<CitationState>({ status: 'idle' });
   const hasRun = useRef(false);
-  const reportQueued = useRef(false);
+  const reportRequested = useRef(false);
+  const [report, setReport] = useState<ReportRequestOutcome | { status: 'pending' } | null>(null);
+  const homepageEmail = (searchParams.get('email') ?? '').trim();
 
   function buildPassthrough(): Record<string, string> {
     const out: Record<string, string> = {};
@@ -169,23 +171,37 @@ function OverviewPageInner() {
   }, []);
 
   // Visitors who arrived with ?email= (the prequire.ai homepage form) were promised
-  // the report by email and are not shown the email form below, so queue it here.
-  useEffect(() => {
-    if (cit.status !== 'done' || reportQueued.current) return;
-    const job = reportJobFor({
-      email: searchParams.get('email'),
+  // the report by email and are not shown the email form below, so request it here:
+  // consent record first, then the queue, tied to the scan on screen.
+  async function requestReport() {
+    if (cit.status !== 'done') return;
+    setReport({ status: 'pending' });
+    const outcome = await requestHomepageReport({
+      email: homepageEmail,
       name: searchParams.get('name'),
       url: cit.url,
       scanId: cit.scanId,
+      score: cit.score,
+      utm: {
+        utm_source: searchParams.get('utm_source'),
+        utm_medium: searchParams.get('utm_medium'),
+        utm_campaign: searchParams.get('utm_campaign'),
+        utm_content: searchParams.get('utm_content'),
+        utm_term: searchParams.get('utm_term'),
+      },
     });
-    if (!job) return;
-    reportQueued.current = true;
-    queueEmailReport(job).then((ok) => {
-      track(ok ? 'report_delivery_succeeded' : 'report_delivery_failed', {
-        surface: 'overview',
-        ...(cit.scanId ? { scan_id: cit.scanId } : {}),
-      });
+    setReport(outcome);
+    track(outcome.status === 'queued' ? 'report_delivery_succeeded' : 'report_delivery_failed', {
+      surface: 'overview',
+      ...(outcome.status !== 'queued' ? { reason: outcome.status === 'failed' ? `${outcome.step}_failed` : outcome.status } : {}),
+      ...(cit.scanId ? { scan_id: cit.scanId } : {}),
     });
+  }
+
+  useEffect(() => {
+    if (cit.status !== 'done' || !homepageEmail || reportRequested.current) return;
+    reportRequested.current = true;
+    void requestReport();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cit]);
 
@@ -485,9 +501,40 @@ function OverviewPageInner() {
           </div>
         )}
 
+        {/* Emailed-report status for visitors who arrived with an email param. */}
+        {cit.status === 'done' && homepageEmail && report && (
+          <div role="status" className="bg-[#0d1525] border border-slate-800 rounded-2xl p-5 text-sm text-slate-300">
+            {report.status === 'pending' && <p>Preparing your emailed report…</p>}
+            {report.status === 'queued' && (
+              <p>
+                We&apos;re emailing this report to <strong className="text-slate-100">{homepageEmail}</strong>.
+                It can take a few minutes to arrive.
+              </p>
+            )}
+            {report.status === 'no_scan' && (
+              <p>We couldn&apos;t save this scan, so it can&apos;t be emailed. Your results stay on this page; run the scan again to get it by email.</p>
+            )}
+            {report.status === 'limited' && (
+              <p>We&apos;ve reached today&apos;s limit for emailed reports to this address. Your results stay on this page.</p>
+            )}
+            {report.status === 'failed' && (
+              <>
+                <p>We couldn&apos;t send your report request. Your results on this page are unaffected.</p>
+                <button
+                  type="button"
+                  onClick={() => void requestReport()}
+                  className="mt-3 border border-slate-500 text-slate-100 hover:bg-slate-800 px-4 py-2 rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-300"
+                >
+                  Try again
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         {/* Optional email capture — results above stay fully visible either way.
-            Visitors who arrived with an email param have the report queued by
-            the effect above and don't need a second prompt. */}
+            Visitors who arrived with an email param are handled by the status above
+            and don't need a second prompt. */}
         {cit.status === 'done' && !searchParams.get('email') && (
           <EmailReportForm
             url={cit.url}

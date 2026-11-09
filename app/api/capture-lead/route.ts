@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { captureLead } from '@/lib/supabase/captureLead';
+import { captureLead, toConsentSource } from '@/lib/supabase/captureLead';
 import { isValidEmail } from '@/lib/validation';
 import { scoreBand } from '@/lib/scanUtils';
 
@@ -61,6 +61,7 @@ export async function POST(req: NextRequest) {
       utm_campaign: str(body.utm_campaign),
       utm_content: str(body.utm_content),
       utm_term: str(body.utm_term),
+      consent_source: toConsentSource(body.consent_source),
     });
 
     if (!outcome.ok) {

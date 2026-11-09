@@ -12,6 +12,8 @@ import { buildExtractionResilience } from '@/lib/extraction-resilience';
 import { resolveStudyAuth, buildStudyEnvelope } from '@/lib/study';
 import { logScanLead } from '@/lib/supabase/scanLeads';
 import { saveScanResult } from '@/lib/supabase/scanResults';
+import { safeFetch, validateTarget, EgressError } from '@/lib/egress';
+import { checkDailyBudget, findRecentScan } from '@/lib/scanBudget';
 
 const SCAN_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -67,7 +69,12 @@ export async function POST(req: NextRequest) {
         }
         const isStudy = studyAuth === 'authorized';
 
-        // Normalize URL
+        // Normalize URL. An explicit non-web scheme is refused, not rewritten to https://.
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !/^https?:\/\//i.test(url)) {
+          controller.enqueue(encode({ stage: 'error', message: 'Only http and https URLs can be scanned.' }));
+          controller.close();
+          return;
+        }
         let parsedUrl: URL;
         try {
           parsedUrl = new URL(url.startsWith('http') ? url : `https://${url}`);
@@ -78,17 +85,50 @@ export async function POST(req: NextRequest) {
         }
         const normalizedUrl = parsedUrl.toString();
 
+        // Destination policy before anything else: refused URLs cost nothing.
+        try {
+          validateTarget(normalizedUrl);
+        } catch (e) {
+          controller.enqueue(encode({ stage: 'error', message: e instanceof EgressError ? e.message : 'Invalid URL' }));
+          controller.close();
+          return;
+        }
+
+        // Cost controls for anonymous scans (Quinn and study runs are exempt).
+        if (!isInternal && !isStudy) {
+          const recent = await findRecentScan(normalizedUrl);
+          if (recent) {
+            controller.enqueue(encode({
+              stage: 'complete',
+              data: { result: recent.result, url: normalizedUrl, scan_id: recent.scan_id },
+            }));
+            controller.close();
+            return;
+          }
+          const budget = await checkDailyBudget();
+          if (!budget.ok) {
+            console.error('[scan] paid scan refused by budget:', budget.reason);
+            controller.enqueue(encode({
+              stage: 'error',
+              message: 'Free scans are paused for the moment because of high demand. Please try again later.',
+            }));
+            controller.close();
+            return;
+          }
+        }
+
         // Stage 1 — fetching
         controller.enqueue(encode({ stage: 'fetching', message: 'Fetching page content...' }));
 
         let html = '';
         try {
-          const fetchRes = await fetch(normalizedUrl, {
+          const fetchRes = await safeFetch(normalizedUrl, {
             headers: {
               'User-Agent': 'Mozilla/5.0 (compatible; PrequireAEOScanner/1.0)',
               Accept: 'text/html,application/xhtml+xml',
             },
-            signal: AbortSignal.timeout(10000),
+            timeoutMs: 10000,
+            maxBytes: 2 * 1024 * 1024,
           });
           if (!fetchRes.ok) {
             controller.enqueue(encode({
@@ -99,10 +139,10 @@ export async function POST(req: NextRequest) {
             return;
           }
           html = await fetchRes.text();
-        } catch {
+        } catch (e) {
           controller.enqueue(encode({
             stage: 'error',
-            message: 'Could not reach the URL. Check it is publicly accessible.',
+            message: e instanceof EgressError ? e.message : 'Could not reach the URL. Check it is publicly accessible.',
           }));
           controller.close();
           return;

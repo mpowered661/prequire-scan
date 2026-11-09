@@ -1,5 +1,6 @@
 import type { RawCrawlerFetch, HttpTesterOptions } from './types';
 import { getActiveCrawlers, BROWSER_UA, PREQUIRE_SUFFIX } from './crawlers';
+import { safeFetch } from '@/lib/egress';
 
 const MAX_REDIRECTS = 5;
 const TIMEOUT_MS = 20000;
@@ -35,12 +36,11 @@ async function fetchWithUA(
   const start = Date.now();
 
   try {
-    const response = await fetch(url, {
-      method: 'GET',
+    // Guarded fetch: public destinations only, every redirect re-validated, body capped.
+    const response = await safeFetch(url, {
       headers: { 'User-Agent': ua },
-      redirect: 'follow',
-      // AbortSignal.timeout is available in Node 18+ and modern browsers
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      timeoutMs: TIMEOUT_MS,
+      maxRedirects: MAX_REDIRECTS,
     });
 
     const response_time_ms = Date.now() - start;

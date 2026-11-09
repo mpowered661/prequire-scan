@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import { buildReport } from '@/lib/aeo-readiness/report-builder';
 import { resolveStudyAuth } from '@/lib/study';
 import { getServiceClient } from '@/lib/supabase/serviceClient';
+import { validateTarget, EgressError } from '@/lib/egress';
 
 const ANON_HOURLY  = 5;
 const ANON_DAILY   = 25;
@@ -91,8 +92,9 @@ export async function POST(req: NextRequest) {
     try {
       const parsed = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`);
       normalizedUrl = parsed.toString();
-    } catch {
-      return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
+      validateTarget(normalizedUrl); // refuse private/metadata/non-web targets before any fetch
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof EgressError ? e.message : 'Invalid URL' }, { status: 400 });
     }
 
     // Study mode: identical report pipeline, zero production side effects —

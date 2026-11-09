@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { NextRequest } from 'next/server';
 
-const { createMock, logScanLeadMock, saveScanResultMock, buildResilienceMock } = vi.hoisted(() => ({
+const { createMock, logScanLeadMock, saveScanResultMock, buildResilienceMock, safeFetchMock, checkBudgetMock, findRecentMock } = vi.hoisted(() => ({
+  safeFetchMock: vi.fn(),
+  checkBudgetMock: vi.fn(),
+  findRecentMock: vi.fn(),
   createMock: vi.fn(),
   logScanLeadMock: vi.fn(),
   saveScanResultMock: vi.fn(),
@@ -25,6 +28,12 @@ vi.mock('@anthropic-ai/sdk', () => ({
 
 vi.mock('@/lib/supabase/scanLeads', () => ({ logScanLead: logScanLeadMock }));
 vi.mock('@/lib/supabase/scanResults', () => ({ saveScanResult: saveScanResultMock }));
+// Real validateTarget/EgressError; only the network hop is replaced.
+vi.mock('@/lib/egress', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/egress')>()),
+  safeFetch: safeFetchMock,
+}));
+vi.mock('@/lib/scanBudget', () => ({ checkDailyBudget: checkBudgetMock, findRecentScan: findRecentMock }));
 
 import { POST } from './route';
 
@@ -56,9 +65,9 @@ const EXPECTED_OVERALL = 80;
 const EXPECTED_A11Y = 84;
 
 /** Minimal stand-in for the only two NextRequest members the route touches. */
-function makeRequest(body: Record<string, unknown>): NextRequest {
+function makeRequest(body: Record<string, unknown>, headers: Record<string, string> = {}): NextRequest {
   return {
-    headers: { get: () => null },
+    headers: { get: (k: string) => headers[k.toLowerCase()] ?? null },
     json: async () => body,
   } as unknown as NextRequest;
 }
@@ -82,15 +91,13 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-  // Page fetch succeeds with minimal HTML.
-  vi.stubGlobal(
-    'fetch',
-    vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: async () => '<html><body><h1>Test</h1></body></html>',
-    }),
-  );
+  // Page fetch succeeds with minimal HTML; budget open; no recent scan to reuse.
+  safeFetchMock.mockReset();
+  safeFetchMock.mockImplementation(async () => new Response('<html><body><h1>Test</h1></body></html>', { status: 200 }));
+  checkBudgetMock.mockReset();
+  checkBudgetMock.mockResolvedValue({ ok: true });
+  findRecentMock.mockReset();
+  findRecentMock.mockResolvedValue(null);
 
   createMock.mockResolvedValue({
     content: [{ type: 'text', text: JSON.stringify(SCAN_RESULT) }],
@@ -206,17 +213,12 @@ describe('POST /api/scan — lead logging is non-fatal', () => {
   it('is not part of the overall score even when the page is fragile', async () => {
     logScanLeadMock.mockResolvedValue({ ok: true });
     // A page whose numbers lose every qualifier still cannot move overallScore.
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        text: async () =>
-          '<html><body><table><caption>In $ millions</caption>' +
-          '<thead><tr><th>Region</th><th>2025</th><th>2026</th></tr></thead>' +
-          '<tbody><tr><th>North</th><td>4.2</td><td>5.1</td></tr></tbody></table></body></html>',
-      }),
-    );
+    safeFetchMock.mockResolvedValueOnce(new Response(
+      '<html><body><table><caption>In $ millions</caption>' +
+        '<thead><tr><th>Region</th><th>2025</th><th>2026</th></tr></thead>' +
+        '<tbody><tr><th>North</th><td>4.2</td><td>5.1</td></tr></tbody></table></body></html>',
+      { status: 200 },
+    ));
 
     const events = await readEvents(await POST(makeRequest({ url: 'example.com' })));
     const result = (events.find((e) => e.stage === 'complete')!.data as {
@@ -264,5 +266,81 @@ describe('POST /api/scan — lead logging is non-fatal', () => {
     expect(logScanLeadMock).toHaveBeenCalledWith(
       expect.objectContaining({ utm_content: 'variant-b', utm_term: 'dental seo wichita' }),
     );
+  });
+});
+
+describe('POST /api/scan — egress guard (SSRF)', () => {
+  it.each([
+    'http://169.254.169.254/latest/meta-data/',
+    'http://127.0.0.1/',
+    'http://10.0.0.1/admin',
+    'http://[::1]/',
+    'http://2130706433/',
+    'https://example.com:6379/',
+    'file:///etc/passwd',
+  ])('refuses %s before any fetch or model call', async (url) => {
+    const events = await readEvents(await POST(makeRequest({ url })));
+    const err = events.find((e) => e.stage === 'error');
+    expect(err).toBeDefined();
+    expect(String(err!.message)).not.toMatch(/169\.254|127\.0|10\.0|metadata|ECONN|stack/i);
+    expect(safeFetchMock).not.toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
+    expect(checkBudgetMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the guarded fetch with a bounded timeout and body size', async () => {
+    logScanLeadMock.mockResolvedValue({ ok: true });
+    await readEvents(await POST(makeRequest({ url: 'example.com' })));
+    expect(safeFetchMock).toHaveBeenCalledWith('https://example.com/', expect.objectContaining({
+      timeoutMs: 10000,
+      maxBytes: expect.any(Number),
+    }));
+  });
+
+  it("shows only the guard's visitor-safe message when a redirect or DNS answer is refused", async () => {
+    const { EgressError } = await import('@/lib/egress');
+    safeFetchMock.mockRejectedValueOnce(new EgressError('This address cannot be scanned. Only public websites are supported.', 'resolved to non-public IP 10.0.0.7'));
+    const events = await readEvents(await POST(makeRequest({ url: 'example.com' })));
+    const err = events.find((e) => e.stage === 'error')!;
+    expect(err.message).toBe('This address cannot be scanned. Only public websites are supported.');
+    expect(createMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/scan — cost controls', () => {
+  it('makes no model call when the daily ceiling is reached', async () => {
+    checkBudgetMock.mockResolvedValueOnce({ ok: false, reason: 'cap_reached' });
+    const events = await readEvents(await POST(makeRequest({ url: 'example.com' })));
+    expect(events.find((e) => e.stage === 'error')).toBeDefined();
+    expect(safeFetchMock).not.toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed (no model call) when the budget cannot be read', async () => {
+    checkBudgetMock.mockResolvedValueOnce({ ok: false, reason: 'unavailable' });
+    const events = await readEvents(await POST(makeRequest({ url: 'example.com' })));
+    expect(events.find((e) => e.stage === 'error')).toBeDefined();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('reuses a scan of the same URL from the last few minutes: no fetch, no model call, same scan_id', async () => {
+    logScanLeadMock.mockResolvedValue({ ok: true });
+    findRecentMock.mockResolvedValueOnce({ scan_id: 'recent-1', result: { ...SCAN_RESULT, overallScore: 80 } });
+    const events = await readEvents(await POST(makeRequest({ url: 'example.com' })));
+    const complete = events.find((e) => e.stage === 'complete')!;
+    expect((complete.data as { scan_id: string }).scan_id).toBe('recent-1');
+    expect(safeFetchMock).not.toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
+    expect(saveScanResultMock).not.toHaveBeenCalled();
+  });
+
+  it('internal (Quinn) scans bypass the public ceiling and reuse', async () => {
+    process.env.SCAN_INTERNAL_TOKEN = 'tok';
+    logScanLeadMock.mockResolvedValue({ ok: true });
+    await readEvents(await POST(makeRequest({ url: 'example.com' }, { 'x-internal-token': 'tok' })));
+    expect(checkBudgetMock).not.toHaveBeenCalled();
+    expect(findRecentMock).not.toHaveBeenCalled();
+    expect(createMock).toHaveBeenCalledTimes(1);
+    delete process.env.SCAN_INTERNAL_TOKEN;
   });
 });

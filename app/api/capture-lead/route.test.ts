@@ -5,7 +5,10 @@ const { captureLeadMock } = vi.hoisted(() => ({ captureLeadMock: vi.fn() }));
 
 // Fully mocked — the real module creates a Supabase client at import time.
 // isValidEmail lives in lib/validation (pure) and is NOT mocked.
-vi.mock('@/lib/supabase/captureLead', () => ({ captureLead: captureLeadMock }));
+vi.mock('@/lib/supabase/captureLead', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/supabase/captureLead')>()),
+  captureLead: captureLeadMock,
+}));
 
 import { POST } from './route';
 
@@ -106,5 +109,18 @@ describe('POST /api/capture-lead', () => {
     expect(forwarded).not.toContain('phone');
     expect(forwarded).not.toContain('sms');
     expect(forwarded).not.toContain('555');
+  });
+});
+
+describe('POST /api/capture-lead — consent source is allowlisted server-side', () => {
+  it.each([
+    ['homepage_audit_form_v1', 'homepage_audit_form_v1'],
+    ['marketing_all_v9', 'scan_email_report_v1'],
+    [undefined, 'scan_email_report_v1'],
+  ])('consent_source %s is stored as %s', async (sent, stored) => {
+    captureLeadMock.mockResolvedValue({ ok: true, duplicate: false, degraded: false });
+    const res = await POST(makeRequest({ email: 'a@b.com', url: 'https://example.com', score: 50, consent_source: sent }));
+    expect(res.status).toBe(200);
+    expect(captureLeadMock).toHaveBeenLastCalledWith(expect.objectContaining({ consent_source: stored }));
   });
 });
