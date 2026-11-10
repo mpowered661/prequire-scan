@@ -51,6 +51,8 @@ function markSubmitted(url: string): void {
 
 export function EmailReportForm({ url, score, surface, meta, utm }: Props) {
   const [email, setEmail] = useState('');
+  // Separate, optional marketing consent. Never preselected.
+  const [updatesOptIn, setUpdatesOptIn] = useState(false);
   const [state, setState] = useState<FormState>({ phase: 'idle' });
   const shownTracked = useRef(false);
   const [hidden, setHidden] = useState(false);
@@ -86,6 +88,8 @@ export function EmailReportForm({ url, score, surface, meta, utm }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: trimmed,
+          consent_source: 'scan_email_report_v2',
+          marketing_opt_in: updatesOptIn,
           url,
           score,
           scan_id: meta?.scan_id ?? null,
@@ -174,7 +178,8 @@ export function EmailReportForm({ url, score, surface, meta, utm }: Props) {
         Optional — your results stay right here either way. We&apos;ll email you the complete
         report with your saved result link and a recommended action plan.
       </p>
-      <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3" noValidate>
+      <form onSubmit={handleSubmit} className="space-y-3" noValidate>
+        <div className="flex flex-col sm:flex-row gap-3">
         <div className="flex-1">
           <label htmlFor="report-email" className="sr-only">
             Email address for your report
@@ -195,19 +200,33 @@ export function EmailReportForm({ url, score, surface, meta, utm }: Props) {
         <button
           type="submit"
           disabled={state.phase === 'submitting'}
-          className="bg-orange-500 hover:bg-orange-400 disabled:bg-orange-500/40 disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm whitespace-nowrap"
+          className="bg-orange-500 hover:bg-orange-400 disabled:bg-orange-500/40 disabled:cursor-not-allowed text-slate-950 font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm whitespace-nowrap"
         >
           {state.phase === 'submitting' ? 'Sending…' : 'Email my report'}
         </button>
+        </div>
+        <div className="flex items-start gap-2">
+          <input
+            id="report-email-updates"
+            type="checkbox"
+            checked={updatesOptIn}
+            onChange={(e) => setUpdatesOptIn(e.target.checked)}
+            disabled={state.phase === 'submitting'}
+            className="mt-0.5 h-4 w-4 accent-orange-500"
+          />
+          <label htmlFor="report-email-updates" className="text-xs text-slate-300">
+            Also send me occasional Prequire updates (optional). Unsubscribe anytime.
+          </label>
+        </div>
       </form>
       {state.phase === 'error' && (
         <p id="report-email-error" role="alert" className="mt-2 text-xs text-red-400">
           {state.message}
         </p>
       )}
-      <p id="report-email-consent" className="mt-3 text-xs text-slate-500">
-        By submitting, you agree to receive this report and occasional Prequire emails.
-        Unsubscribe anytime. No phone number required — we never send SMS.
+      <p id="report-email-consent" className="mt-3 text-xs text-slate-400">
+        By submitting, you agree to receive this report by email. Updates are sent only if you
+        tick the box above. No phone number required — we never send SMS.
       </p>
     </div>
   );

@@ -8,6 +8,27 @@ import type { ScoreBand } from '@/lib/scanUtils';
 
 const DEDUPE_WINDOW_HOURS = 24;
 
+// Where the consent was given, and what it covers, as worded at that surface.
+// The scope is derived server-side from the source; a client cannot choose it.
+//   scan_email_report_v1   — scanner form: "you agree to receive this report and occasional Prequire emails"
+//   homepage_audit_form_v1 — prequire.ai form: "add it and we send the same report to your inbox" (report only)
+//   scan_email_report_v2   — scanner form: "receive this report by email" + a separate, unticked
+//                            "occasional Prequire updates" checkbox (marketing only when ticked)
+export const CONSENT_SCOPES = {
+  scan_email_report_v1: 'report_and_occasional_emails',
+  homepage_audit_form_v1: 'report_only',
+  scan_email_report_v2: 'report_only',
+} as const;
+export type ConsentSource = keyof typeof CONSENT_SCOPES;
+export function toConsentSource(v: unknown): ConsentSource {
+  return v === 'homepage_audit_form_v1' || v === 'scan_email_report_v2' ? v : 'scan_email_report_v1';
+}
+/** Marketing consent exists only where the surface offered a separate box and it was ticked. */
+export function consentScopeFor(source: ConsentSource, marketingOptIn: boolean): string {
+  if (source === 'scan_email_report_v2' && marketingOptIn) return 'report_and_marketing';
+  return CONSENT_SCOPES[source];
+}
+
 export { isValidEmail } from '@/lib/validation';
 
 export interface CaptureLeadInput {
@@ -25,6 +46,8 @@ export interface CaptureLeadInput {
   utm_campaign?: string | null;
   utm_content?: string | null;
   utm_term?: string | null;
+  consent_source?: ConsentSource;
+  marketing_opt_in?: boolean;
 }
 
 export type CaptureLeadOutcome =
@@ -47,7 +70,9 @@ export function buildLeadRow(input: CaptureLeadInput, consentTs: string) {
       registry_version: input.registry_version ?? null,
       prompt_version: input.prompt_version ?? null,
       model: input.model ?? null,
-      consent_source: 'scan_email_report_v1',
+      consent_source: input.consent_source ?? 'scan_email_report_v1',
+      consent_scope: consentScopeFor(input.consent_source ?? 'scan_email_report_v1', input.marketing_opt_in === true),
+      marketing_opt_in: (input.consent_source === 'scan_email_report_v2' && input.marketing_opt_in === true),
     },
     utm_source: input.utm_source ?? null,
     utm_medium: input.utm_medium ?? null,

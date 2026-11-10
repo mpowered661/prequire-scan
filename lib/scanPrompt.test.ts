@@ -127,3 +127,22 @@ describe('SCAN_SYSTEM_PROMPT accessibility contract', () => {
     expect(SCAN_SYSTEM_PROMPT).not.toMatch(/WCAG/i);
   });
 });
+
+describe('extractJsonLd — bounded structured-data input', () => {
+  it('caps the schema text sent to the model but keeps every @type', async () => {
+    const { extractJsonLd, JSON_LD_LIMIT } = await import('./scanPrompt');
+    const big = JSON.stringify({ '@type': 'Organization', description: 'x'.repeat(JSON_LD_LIMIT * 3) });
+    const small = JSON.stringify({ '@type': 'FAQPage' });
+    const html = `<script type="application/ld+json">${big}</script><script type="application/ld+json">${small}</script>`;
+    const out = extractJsonLd(html);
+    expect(out.blocksText.length).toBeLessThan(JSON_LD_LIMIT + 100);
+    expect(out.blocksText).toMatch(/structured data truncated/);
+    expect(out.types).toEqual(expect.arrayContaining(['Organization', 'FAQPage']));
+  });
+
+  it('leaves normal-sized schema untouched', async () => {
+    const { extractJsonLd } = await import('./scanPrompt');
+    const block = JSON.stringify({ '@type': 'Article', headline: 'h' });
+    expect(extractJsonLd(`<script type="application/ld+json">${block}</script>`).blocksText).toBe(block);
+  });
+});

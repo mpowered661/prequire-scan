@@ -147,6 +147,8 @@ export interface ExtractedSchema {
   blockCount: number;   // successfully parsed blocks
 }
 
+export const JSON_LD_LIMIT = 20000;
+
 export function extractJsonLd(rawHtml: string): ExtractedSchema {
   // Match <script type="application/ld+json"> regardless of attribute order or extra
   // attributes (e.g. class="yoast-schema-graph"). The type attribute may appear anywhere.
@@ -188,9 +190,14 @@ export function extractJsonLd(rawHtml: string): ExtractedSchema {
   }
 
   const hasSchema = blocks.length > 0;
-  const blocksText = hasSchema
-    ? blocks.join('\n\n')
-    : 'None detected.';
+  // Bounded like the HTML body: the model sees at most JSON_LD_LIMIT characters of
+  // schema text. @type values above are still collected from every block.
+  const joined = blocks.join('\n\n');
+  const blocksText = !hasSchema
+    ? 'None detected.'
+    : joined.length > JSON_LD_LIMIT
+      ? joined.slice(0, JSON_LD_LIMIT) + '\n[...structured data truncated...]'
+      : joined;
 
   return {
     blocksText,

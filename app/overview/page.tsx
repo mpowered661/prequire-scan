@@ -8,6 +8,7 @@ import { scoreSurface } from '@/lib/aeo-readiness/score-surface';
 import { EmailReportForm } from '@/components/EmailReportForm';
 import { scoreBand } from '@/lib/scanUtils';
 import { track } from '@/lib/track';
+import { requestHomepageReport, type ReportRequestOutcome } from '@/lib/reportQueue';
 
 const PASSTHROUGH = ['email', 'name', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const;
 
@@ -64,6 +65,9 @@ function OverviewPageInner() {
   const [vis, setVis] = useState<VisibilityState>({ status: 'idle' });
   const [cit, setCit] = useState<CitationState>({ status: 'idle' });
   const hasRun = useRef(false);
+  const reportRequested = useRef(false);
+  const [report, setReport] = useState<ReportRequestOutcome | { status: 'pending' } | null>(null);
+  const homepageEmail = (searchParams.get('email') ?? '').trim();
 
   function buildPassthrough(): Record<string, string> {
     const out: Record<string, string> = {};
@@ -166,6 +170,41 @@ function OverviewPageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Visitors who arrived with ?email= (the prequire.ai homepage form) were promised
+  // the report by email and are not shown the email form below, so request it here:
+  // consent record first, then the queue, tied to the scan on screen.
+  async function requestReport() {
+    if (cit.status !== 'done') return;
+    setReport({ status: 'pending' });
+    const outcome = await requestHomepageReport({
+      email: homepageEmail,
+      name: searchParams.get('name'),
+      url: cit.url,
+      scanId: cit.scanId,
+      score: cit.score,
+      utm: {
+        utm_source: searchParams.get('utm_source'),
+        utm_medium: searchParams.get('utm_medium'),
+        utm_campaign: searchParams.get('utm_campaign'),
+        utm_content: searchParams.get('utm_content'),
+        utm_term: searchParams.get('utm_term'),
+      },
+    });
+    setReport(outcome);
+    track(outcome.status === 'queued' ? 'report_delivery_succeeded' : 'report_delivery_failed', {
+      surface: 'overview',
+      ...(outcome.status !== 'queued' ? { reason: outcome.status === 'failed' ? `${outcome.step}_failed` : outcome.status } : {}),
+      ...(cit.scanId ? { scan_id: cit.scanId } : {}),
+    });
+  }
+
+  useEffect(() => {
+    if (cit.status !== 'done' || !homepageEmail || reportRequested.current) return;
+    reportRequested.current = true;
+    void requestReport();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cit]);
+
   const hostname = (() => {
     try {
       return new URL(url.startsWith('http') ? url : `https://${url}`).hostname;
@@ -199,12 +238,12 @@ function OverviewPageInner() {
           </a>
           {combinedScore !== null && (
             <div className="flex items-center gap-2">
-              <span className="text-xs font-mono text-slate-500 uppercase tracking-wider">
+              <span className="text-xs font-mono text-slate-400 uppercase tracking-wider">
                 Prequire AEO Score
               </span>
               <span className={`text-xl font-bold font-mono ${scoreColor(combinedScore)}`}>
                 {combinedScore}
-                <span className="text-sm text-slate-500">/100</span>
+                <span className="text-sm text-slate-400">/100</span>
               </span>
             </div>
           )}
@@ -214,8 +253,8 @@ function OverviewPageInner() {
       <div className="max-w-4xl mx-auto px-4 py-10 space-y-6">
         {/* URL header */}
         <div>
-          <p className="text-xs font-mono text-slate-500 uppercase tracking-wider mb-1">Scanning</p>
-          <p className="text-lg font-mono text-slate-200 truncate">{hostname}</p>
+          <p className="text-xs font-mono text-slate-400 uppercase tracking-wider mb-1">Scanning</p>
+          <h1 className="text-lg font-mono text-slate-200 truncate">{hostname}</h1>
         </div>
 
         {/* Combined score hero (once both are done) */}
@@ -225,14 +264,14 @@ function OverviewPageInner() {
               <div className={`text-5xl font-bold font-mono ${scoreColor(combinedScore)}`}>
                 {combinedScore}
               </div>
-              <div className="text-xs text-slate-500 mt-1">/ 100</div>
+              <div className="text-xs text-slate-400 mt-1">/ 100</div>
             </div>
             <div>
               <p className={`text-lg font-semibold ${scoreColor(combinedScore)}`}>
                 {scoreLabel(combinedScore)}
               </p>
               <p className="text-sm text-slate-400 mt-0.5">Prequire AEO Score</p>
-              <p className="text-xs text-slate-600 mt-1">50/50 average of Visibility + Citation</p>
+              <p className="text-xs text-slate-400 mt-1">50/50 average of Visibility + Citation</p>
             </div>
           </div>
         )}
@@ -250,7 +289,7 @@ function OverviewPageInner() {
             </div>
 
             {vis.status === 'idle' && (
-              <div className="flex items-center gap-2 text-slate-500 text-sm">
+              <div className="flex items-center gap-2 text-slate-400 text-sm">
                 <Spinner />
                 <span>Starting…</span>
               </div>
@@ -286,7 +325,7 @@ function OverviewPageInner() {
                           <span className="text-4xl font-bold font-mono text-slate-400">—</span>
                           <span className="text-slate-400 text-sm pb-1">Undeterminable</span>
                         </div>
-                        <p className="text-xs text-slate-500 mt-1">
+                        <p className="text-xs text-slate-400 mt-1">
                           {surface.undeterminable} of {surface.total} crawlers could not be verified by UA simulation
                           {surface.determinable > 0 &&
                             ` — determinable signals: ${vis.score}/100 (${surface.determinable} of ${surface.total})`}
@@ -300,7 +339,7 @@ function OverviewPageInner() {
                         <span className={`text-4xl font-bold font-mono ${scoreColor(vis.score)}`}>
                           {vis.score}
                         </span>
-                        <span className="text-slate-500 text-sm pb-1">/ 100</span>
+                        <span className="text-slate-400 text-sm pb-1">/ 100</span>
                         <span className={`text-sm pb-1 ${scoreColor(vis.score)}`}>
                           {scoreLabel(vis.score)}
                         </span>
@@ -324,7 +363,7 @@ function OverviewPageInner() {
                   ].map(({ label, val, color }) => (
                     <div key={label} className="bg-slate-800/50 rounded-lg py-2">
                       <div className={`text-xl font-bold font-mono ${color}`}>{val}</div>
-                      <div className="text-xs text-slate-500">{label}</div>
+                      <div className="text-xs text-slate-400">{label}</div>
                     </div>
                   ))}
                 </div>
@@ -399,7 +438,7 @@ function OverviewPageInner() {
                   <span className={`text-4xl font-bold font-mono ${scoreColor(cit.score)}`}>
                     {cit.score}
                   </span>
-                  <span className="text-slate-500 text-sm pb-1">/ 100</span>
+                  <span className="text-slate-400 text-sm pb-1">/ 100</span>
                   <span className={`text-sm pb-1 ${scoreColor(cit.score)}`}>
                     {scoreLabel(cit.score)}
                   </span>
@@ -417,7 +456,7 @@ function OverviewPageInner() {
                       };
                       return (
                         <div key={key} className="flex items-center gap-3">
-                          <span className="text-xs text-slate-500 w-32 shrink-0">{labels[key] ?? key}</span>
+                          <span className="text-xs text-slate-400 w-32 shrink-0">{labels[key] ?? key}</span>
                           <div className="flex-1 bg-slate-800 rounded-full h-1.5">
                             <div
                               className={`h-1.5 rounded-full ${cat.score >= 80 ? 'bg-green-500' : cat.score >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
@@ -447,7 +486,7 @@ function OverviewPageInner() {
                     Full citation report →
                   </a>
                 ) : (
-                  <p className="text-xs text-slate-600">Full report unavailable (save failed)</p>
+                  <p className="text-xs text-slate-400">Full report unavailable (save failed)</p>
                 )}
               </div>
             )}
@@ -457,14 +496,45 @@ function OverviewPageInner() {
         {/* Summary blurb (once both done) */}
         {cit.status === 'done' && (
           <div className="bg-[#0d1525] border border-slate-800 rounded-2xl p-5">
-            <p className="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Summary</p>
+            <p className="text-xs font-mono text-slate-400 uppercase tracking-wider mb-2">Summary</p>
             <p className="text-sm text-slate-300 leading-relaxed">{cit.result.summary}</p>
           </div>
         )}
 
+        {/* Emailed-report status for visitors who arrived with an email param. */}
+        {cit.status === 'done' && homepageEmail && report && (
+          <div role="status" className="bg-[#0d1525] border border-slate-800 rounded-2xl p-5 text-sm text-slate-300">
+            {report.status === 'pending' && <p>Preparing your emailed report…</p>}
+            {report.status === 'queued' && (
+              <p>
+                We&apos;re emailing this report to <strong className="text-slate-100">{homepageEmail}</strong>.
+                It can take a few minutes to arrive.
+              </p>
+            )}
+            {report.status === 'no_scan' && (
+              <p>We couldn&apos;t save this scan, so it can&apos;t be emailed. Your results stay on this page; run the scan again to get it by email.</p>
+            )}
+            {report.status === 'limited' && (
+              <p>We&apos;ve reached today&apos;s limit for emailed reports to this address. Your results stay on this page.</p>
+            )}
+            {report.status === 'failed' && (
+              <>
+                <p>We couldn&apos;t send your report request. Your results on this page are unaffected.</p>
+                <button
+                  type="button"
+                  onClick={() => void requestReport()}
+                  className="mt-3 border border-slate-500 text-slate-100 hover:bg-slate-800 px-4 py-2 rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-300"
+                >
+                  Try again
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         {/* Optional email capture — results above stay fully visible either way.
-            Visitors who arrived with an email param already have the report
-            queued by the /scan flow and don't need a second prompt. */}
+            Visitors who arrived with an email param are handled by the status above
+            and don't need a second prompt. */}
         {cit.status === 'done' && !searchParams.get('email') && (
           <EmailReportForm
             url={cit.url}

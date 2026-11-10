@@ -17,14 +17,15 @@ import { analyzeContentDelivery, analyzeMetaTags, analyzeCloaking } from './cont
 import { buildDetectedStack, detectWaf } from './waf-fingerprinter';
 import { computeScore, computePurposeBreakdown } from './scoring';
 import { generateFixes } from './fix-library';
+import { safeFetch } from '@/lib/egress';
 
 async function checkLlmsTxt(url: string): Promise<LlmsTxt> {
   try {
     const base = new URL(url);
     const llmsUrl = `${base.protocol}//${base.host}/llms.txt`;
-    const res = await fetch(llmsUrl, {
+    const res = await safeFetch(llmsUrl, {
       method: 'HEAD',
-      signal: AbortSignal.timeout(8000),
+      timeoutMs: 8000,
       headers: { 'User-Agent': 'Prequire-AEO-Check/1.0' },
     });
     if (res.ok) return { present: true, url: llmsUrl };
@@ -41,8 +42,8 @@ async function fetchRobotsTxtContent(url: string): Promise<string | null> {
   try {
     const base = new URL(url);
     const robotsUrl = `${base.protocol}//${base.host}/robots.txt`;
-    const res = await fetch(robotsUrl, {
-      signal: AbortSignal.timeout(10000),
+    const res = await safeFetch(robotsUrl, {
+      timeoutMs: 10000,
       headers: { 'User-Agent': 'Prequire-AEO-Check/1.0' },
     });
     if (res.status === 404) return '';
