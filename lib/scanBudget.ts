@@ -1,7 +1,7 @@
 // Cost controls for the anonymous /api/scan (one paid model call per scan).
-// Both read the existing scan_results table (url, source, created_at; indexed on
-// created_at and source), so no migration is needed. Per-IP throttling is left to
-// the edge (Vercel Firewall rate-limit rule), where serverless instances share state.
+// The ceiling is an atomic per-UTC-day counter (migration 006); reuse reads the
+// existing scan_results table. Per-IP throttling is left to the edge (Vercel Firewall
+// rate-limit rule), where serverless instances share state.
 import { getServiceClient } from '@/lib/supabase/serviceClient';
 import type { ScanResult } from '@/lib/scanPrompt';
 
@@ -10,7 +10,7 @@ function positiveInt(raw: string | undefined, fallback: number): number {
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
-/** Ceiling on paid public scans per rolling 24 h. Env-tunable without a deploy of code. */
+/** Ceiling on paid public scans per UTC day. Env-tunable (SCAN_PUBLIC_DAILY_CAP). */
 export const PUBLIC_SCAN_DAILY_CAP = positiveInt(process.env.SCAN_PUBLIC_DAILY_CAP, 300);
 
 /** A repeat scan of the same URL inside this window reuses the stored result (no model call). */
@@ -18,17 +18,16 @@ export const SCAN_REUSE_MINUTES = 15;
 
 export type BudgetDecision = { ok: true } | { ok: false; reason: 'cap_reached' | 'unavailable' };
 
-/** Fails closed: if the count cannot be read, no paid call is made. */
-export async function checkDailyBudget(cap = PUBLIC_SCAN_DAILY_CAP): Promise<BudgetDecision> {
+/**
+ * Takes one paid-scan slot for the current UTC day, atomically (migration 006,
+ * public.claim_paid_scan): concurrent requests cannot exceed the cap. Fails closed:
+ * if the claim cannot be made, no paid call is made.
+ */
+export async function claimPaidScan(cap = PUBLIC_SCAN_DAILY_CAP): Promise<BudgetDecision> {
   try {
-    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-    const { count, error } = await getServiceClient()
-      .from('scan_results')
-      .select('scan_id', { count: 'exact', head: true })
-      .eq('source', 'public')
-      .gte('created_at', since);
-    if (error || typeof count !== 'number') return { ok: false, reason: 'unavailable' };
-    return count >= cap ? { ok: false, reason: 'cap_reached' } : { ok: true };
+    const { data, error } = await getServiceClient().rpc('claim_paid_scan', { p_cap: cap });
+    if (error || typeof data !== 'boolean') return { ok: false, reason: 'unavailable' };
+    return data ? { ok: true } : { ok: false, reason: 'cap_reached' };
   } catch {
     return { ok: false, reason: 'unavailable' };
   }

@@ -13,7 +13,7 @@ import { resolveStudyAuth, buildStudyEnvelope } from '@/lib/study';
 import { logScanLead } from '@/lib/supabase/scanLeads';
 import { saveScanResult } from '@/lib/supabase/scanResults';
 import { safeFetch, validateTarget, EgressError } from '@/lib/egress';
-import { checkDailyBudget, findRecentScan } from '@/lib/scanBudget';
+import { claimPaidScan, findRecentScan } from '@/lib/scanBudget';
 
 const SCAN_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -105,16 +105,6 @@ export async function POST(req: NextRequest) {
             controller.close();
             return;
           }
-          const budget = await checkDailyBudget();
-          if (!budget.ok) {
-            console.error('[scan] paid scan refused by budget:', budget.reason);
-            controller.enqueue(encode({
-              stage: 'error',
-              message: 'Free scans are paused for the moment because of high demand. Please try again later.',
-            }));
-            controller.close();
-            return;
-          }
         }
 
         // Stage 1 — fetching
@@ -146,6 +136,23 @@ export async function POST(req: NextRequest) {
           }));
           controller.close();
           return;
+        }
+
+        // Paid-call ceiling: one atomic slot per model call (Quinn and study runs exempt).
+        // Claimed only after the page fetched, so unreachable or refused sites cost nothing.
+        if (!isInternal && !isStudy) {
+          const budget = await claimPaidScan();
+          if (!budget.ok) {
+            console.error('[scan] paid scan refused by budget:', budget.reason);
+            controller.enqueue(encode({
+              stage: 'error',
+              message: budget.reason === 'cap_reached'
+                ? 'We’ve reached today’s limit for free scans. Please try again tomorrow.'
+                : 'Free scans are briefly unavailable. Please try again in a few minutes.',
+            }));
+            controller.close();
+            return;
+          }
         }
 
         // Stage 2 — analyzing

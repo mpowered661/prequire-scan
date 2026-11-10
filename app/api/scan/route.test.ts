@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { NextRequest } from 'next/server';
 
-const { createMock, logScanLeadMock, saveScanResultMock, buildResilienceMock, safeFetchMock, checkBudgetMock, findRecentMock } = vi.hoisted(() => ({
+const { createMock, logScanLeadMock, saveScanResultMock, buildResilienceMock, safeFetchMock, claimMock, findRecentMock } = vi.hoisted(() => ({
   safeFetchMock: vi.fn(),
-  checkBudgetMock: vi.fn(),
+  claimMock: vi.fn(),
   findRecentMock: vi.fn(),
   createMock: vi.fn(),
   logScanLeadMock: vi.fn(),
@@ -33,7 +33,7 @@ vi.mock('@/lib/egress', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/egress')>()),
   safeFetch: safeFetchMock,
 }));
-vi.mock('@/lib/scanBudget', () => ({ checkDailyBudget: checkBudgetMock, findRecentScan: findRecentMock }));
+vi.mock('@/lib/scanBudget', () => ({ claimPaidScan: claimMock, findRecentScan: findRecentMock }));
 
 import { POST } from './route';
 
@@ -94,8 +94,8 @@ beforeEach(() => {
   // Page fetch succeeds with minimal HTML; budget open; no recent scan to reuse.
   safeFetchMock.mockReset();
   safeFetchMock.mockImplementation(async () => new Response('<html><body><h1>Test</h1></body></html>', { status: 200 }));
-  checkBudgetMock.mockReset();
-  checkBudgetMock.mockResolvedValue({ ok: true });
+  claimMock.mockReset();
+  claimMock.mockResolvedValue({ ok: true });
   findRecentMock.mockReset();
   findRecentMock.mockResolvedValue(null);
 
@@ -285,7 +285,7 @@ describe('POST /api/scan — egress guard (SSRF)', () => {
     expect(String(err!.message)).not.toMatch(/169\.254|127\.0|10\.0|metadata|ECONN|stack/i);
     expect(safeFetchMock).not.toHaveBeenCalled();
     expect(createMock).not.toHaveBeenCalled();
-    expect(checkBudgetMock).not.toHaveBeenCalled();
+    expect(claimMock).not.toHaveBeenCalled();
   });
 
   it('uses the guarded fetch with a bounded timeout and body size', async () => {
@@ -308,18 +308,34 @@ describe('POST /api/scan — egress guard (SSRF)', () => {
 });
 
 describe('POST /api/scan — cost controls', () => {
-  it('makes no model call when the daily ceiling is reached', async () => {
-    checkBudgetMock.mockResolvedValueOnce({ ok: false, reason: 'cap_reached' });
+  it('makes no model call when the daily ceiling is reached, with a friendly retry message', async () => {
+    claimMock.mockResolvedValueOnce({ ok: false, reason: 'cap_reached' });
     const events = await readEvents(await POST(makeRequest({ url: 'example.com' })));
-    expect(events.find((e) => e.stage === 'error')).toBeDefined();
-    expect(safeFetchMock).not.toHaveBeenCalled();
+    expect(String(events.find((e) => e.stage === 'error')!.message)).toMatch(/try again tomorrow/);
     expect(createMock).not.toHaveBeenCalled();
+    expect(saveScanResultMock).not.toHaveBeenCalled();
+  });
+
+  it('claims exactly one slot per paid scan, after the page fetched', async () => {
+    logScanLeadMock.mockResolvedValue({ ok: true });
+    await readEvents(await POST(makeRequest({ url: 'example.com' })));
+    expect(claimMock).toHaveBeenCalledTimes(1);
+    expect(safeFetchMock.mock.invocationCallOrder[0]).toBeLessThan(claimMock.mock.invocationCallOrder[0]);
+    expect(claimMock.mock.invocationCallOrder[0]).toBeLessThan(createMock.mock.invocationCallOrder[0]);
+  });
+
+  it('an unreachable or refused page uses no slot', async () => {
+    safeFetchMock.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    await readEvents(await POST(makeRequest({ url: 'example.com' })));
+    expect(claimMock).not.toHaveBeenCalled();
+    await readEvents(await POST(makeRequest({ url: 'http://10.0.0.1/' })));
+    expect(claimMock).not.toHaveBeenCalled();
   });
 
   it('fails closed (no model call) when the budget cannot be read', async () => {
-    checkBudgetMock.mockResolvedValueOnce({ ok: false, reason: 'unavailable' });
+    claimMock.mockResolvedValueOnce({ ok: false, reason: 'unavailable' });
     const events = await readEvents(await POST(makeRequest({ url: 'example.com' })));
-    expect(events.find((e) => e.stage === 'error')).toBeDefined();
+    expect(String(events.find((e) => e.stage === 'error')!.message)).toMatch(/try again in a few minutes/);
     expect(createMock).not.toHaveBeenCalled();
   });
 
@@ -338,7 +354,7 @@ describe('POST /api/scan — cost controls', () => {
     process.env.SCAN_INTERNAL_TOKEN = 'tok';
     logScanLeadMock.mockResolvedValue({ ok: true });
     await readEvents(await POST(makeRequest({ url: 'example.com' }, { 'x-internal-token': 'tok' })));
-    expect(checkBudgetMock).not.toHaveBeenCalled();
+    expect(claimMock).not.toHaveBeenCalled();
     expect(findRecentMock).not.toHaveBeenCalled();
     expect(createMock).toHaveBeenCalledTimes(1);
     delete process.env.SCAN_INTERNAL_TOKEN;
