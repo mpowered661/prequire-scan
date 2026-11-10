@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
       utm_content: str(body.utm_content),
       utm_term: str(body.utm_term),
       consent_source: toConsentSource(body.consent_source),
+      marketing_opt_in: body.marketing_opt_in === true,
     });
 
     if (!outcome.ok) {

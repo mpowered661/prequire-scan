@@ -191,3 +191,19 @@ describe('consent source and scope (report consent is never widened into marketi
     expect(toConsentSource('homepage_audit_form_v1')).toBe('homepage_audit_form_v1');
   });
 });
+
+describe('scanner form v2: separate, optional marketing consent', () => {
+  it('report only unless the box was ticked', async () => {
+    const { buildLeadRow: build } = await import('./captureLead');
+    const off = build({ ...INPUT, consent_source: 'scan_email_report_v2', marketing_opt_in: false }, 't');
+    expect(off.capture_meta).toMatchObject({ consent_scope: 'report_only', marketing_opt_in: false });
+    const on = build({ ...INPUT, consent_source: 'scan_email_report_v2', marketing_opt_in: true }, 't');
+    expect(on.capture_meta).toMatchObject({ consent_scope: 'report_and_marketing', marketing_opt_in: true });
+  });
+
+  it('a marketing flag is ignored where no box was offered (homepage stays report-only)', async () => {
+    const { buildLeadRow: build } = await import('./captureLead');
+    const r = build({ ...INPUT, consent_source: 'homepage_audit_form_v1', marketing_opt_in: true }, 't');
+    expect(r.capture_meta).toMatchObject({ consent_scope: 'report_only', marketing_opt_in: false });
+  });
+});
