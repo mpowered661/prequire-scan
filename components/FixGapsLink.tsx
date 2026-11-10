@@ -15,7 +15,7 @@ export function FixGapsLink({
     <span className="inline-flex flex-col items-center gap-1">
       <a
         href={href}
-        className={`inline-block bg-orange-500 hover:bg-orange-400 text-white font-semibold rounded-xl transition-colors ${pad}`}
+        className={`inline-block bg-orange-500 hover:bg-orange-400 text-slate-950 font-semibold rounded-xl transition-colors ${pad}`}
       >
         {label}
       </a>

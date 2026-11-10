@@ -39,7 +39,7 @@ export function ScoreGauge({ score }: { score: number }) {
           strokeLinecap="round"
           strokeDasharray={circumference}
           strokeDashoffset={offset}
-          style={{ transition: 'stroke-dashoffset 1.2s ease, stroke 0.6s ease' }}
+          className="transition-[stroke-dashoffset,stroke] duration-[1200ms] ease-out motion-reduce:transition-none"
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
@@ -69,7 +69,7 @@ export function CheckRow({ check }: { check: CheckItem }) {
       <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${styles.dot}`} />
       <div className="flex-1 min-w-0">
         <span className="text-sm text-slate-200">{check.label}</span>
-        <p className="text-xs text-slate-500 mt-0.5">{check.detail}</p>
+        <p className="text-xs text-slate-400 mt-0.5">{check.detail}</p>
       </div>
       <span className={`text-xs font-mono uppercase whitespace-nowrap ${styles.text}`}>{styles.label}</span>
     </div>
@@ -104,7 +104,7 @@ export function CategoryCard({
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <span className="text-xl" aria-hidden="true">{icon}</span>
-          <h3 className="font-semibold text-slate-100 text-lg">{label}</h3>
+          <h2 className="font-semibold text-slate-100 text-lg">{label}</h2>
         </div>
         {!a11y && <span className={`text-2xl font-bold ${tone.text}`}>{data.score}</span>}
       </div>
@@ -116,7 +116,7 @@ export function CategoryCard({
         </div>
       ) : (
         <div className="h-1.5 bg-slate-800 rounded-full mb-5 overflow-hidden">
-          <div className={`h-full ${tone.bar} rounded-full transition-all duration-1000`} style={{ width: `${data.score}%` }} />
+          <div className={`h-full ${tone.bar} rounded-full transition-all duration-1000 motion-reduce:transition-none`} style={{ width: `${data.score}%` }} />
         </div>
       )}
 
@@ -151,7 +151,7 @@ export function CategoryCard({
               <div className="absolute inset-0 flex items-center justify-center">
                 <a
                   href={fixHref}
-                  className="bg-orange-500 hover:bg-orange-400 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+                  className="bg-orange-500 hover:bg-orange-400 text-slate-950 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
                 >
                   Ask Prequire about these →
                 </a>

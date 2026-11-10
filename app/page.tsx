@@ -36,7 +36,7 @@ function EntryPageInner() {
   }
 
   return (
-    <main className="min-h-screen bg-[#060d18] text-slate-100">
+    <main id="main-content" className="min-h-screen bg-[#060d18] text-slate-100">
       {/* Hero */}
       <section className="max-w-3xl mx-auto px-4 pt-20 pb-12 text-center">
         <div className="inline-flex items-center gap-2 bg-orange-500/10 border border-orange-500/20 rounded-full px-4 py-1.5 mb-6">
@@ -69,7 +69,7 @@ function EntryPageInner() {
           <button
             type="submit"
             disabled={!url.trim()}
-            className="bg-orange-500 hover:bg-orange-400 disabled:bg-orange-500/40 disabled:cursor-not-allowed text-white font-semibold px-6 py-3 rounded-xl transition-colors whitespace-nowrap"
+            className="bg-orange-500 hover:bg-orange-400 disabled:bg-orange-500/40 disabled:cursor-not-allowed text-slate-950 font-semibold px-6 py-3 rounded-xl transition-colors whitespace-nowrap"
           >
             Run Scan
           </button>

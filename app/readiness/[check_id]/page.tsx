@@ -7,6 +7,8 @@ import { visibilityView, resultLabel, type ResultTone, type VisibilityView } fro
 import { bandLabel, scoreTone } from '@/lib/scanUtils';
 import { FixGapsLink } from '@/components/FixGapsLink';
 import { fixHref } from '@/lib/fixLink';
+import { generateFixes } from '@/lib/aeo-readiness/fix-library';
+import type { AeoReadinessReport, Fix } from '@/lib/aeo-readiness/types';
 
 interface Props {
   params: Promise<{ check_id: string }>;
@@ -24,6 +26,18 @@ const TONE_TEXT: Record<ResultTone, string> = {
 function headlineScore(view: VisibilityView): number | null {
   if (view.state === 'legacy') return view.score;
   return view.state === 'sufficient' ? view.score : null;
+}
+
+// Guidance is regenerated from the stored crawler rows rather than read from the
+// stored report, so reports saved before the safe-guidance change never show
+// the old User-Agent bypass steps. A row too old to analyse shows no fixes —
+// never the stored text.
+function currentFixes(report: AeoReadinessReport): Fix[] {
+  try {
+    return generateFixes(report.crawler_results, report.detected_stack);
+  } catch {
+    return [];
+  }
 }
 
 function describe(view: VisibilityView, hostname: string): string {
@@ -105,7 +119,8 @@ export default async function ReadinessPage({ params }: Props) {
   const { report } = row;
   const view = visibilityView(report);
   const shown = headlineScore(view);
-  const fix = fixHref({ url: row.url, checkId: check_id });
+  const fixLink = fixHref({ url: row.url, checkId: check_id });
+  const fixes = currentFixes(report);
   const hostname = (() => { try { return new URL(row.url).hostname; } catch { return row.url; } })();
   const testedAt = new Date(report.tested_at).toLocaleDateString('en-US', {
     year: 'numeric', month: 'long', day: 'numeric',
@@ -119,7 +134,7 @@ export default async function ReadinessPage({ params }: Props) {
   ].filter(Boolean) as string[];
 
   return (
-    <main className="min-h-screen bg-[#060d18] text-slate-100">
+    <main id="main-content" className="min-h-screen bg-[#060d18] text-slate-100">
       <section className="max-w-4xl mx-auto px-4 pt-16 pb-16">
 
         {/* Nav */}
@@ -187,7 +202,7 @@ export default async function ReadinessPage({ params }: Props) {
             <p className="text-xs text-slate-400 mt-2">Tested {testedAt}</p>
           </div>
           <div className="flex-shrink-0">
-            <FixGapsLink href={fix} />
+            <FixGapsLink href={fixLink} />
           </div>
         </div>
 
@@ -260,7 +275,7 @@ export default async function ReadinessPage({ params }: Props) {
             <span className={`text-xs font-mono px-2.5 py-1 rounded-full border ${
               report.llms_txt.present
                 ? 'bg-green-500/10 border-green-500/30 text-green-300'
-                : 'bg-slate-800 border-slate-700 text-slate-500'
+                : 'bg-slate-800 border-slate-700 text-slate-400'
             }`}>
               {report.llms_txt.present ? '✓ llms.txt present' : '✗ No llms.txt'}
             </span>
@@ -268,14 +283,14 @@ export default async function ReadinessPage({ params }: Props) {
         )}
 
         {/* Fixes */}
-        {report.fixes.length > 0 && (
+        {fixes.length > 0 && (
           <div className="mb-10">
             <h2 className="text-lg font-semibold mb-4">
               Recommended Fixes
-              <span className="ml-2 text-sm font-normal text-slate-500">({report.fixes.length})</span>
+              <span className="ml-2 text-sm font-normal text-slate-400">({fixes.length})</span>
             </h2>
             <div className="space-y-4">
-              {report.fixes.map((fix, i) => (
+              {fixes.map((fix, i) => (
                 <div key={i} className={`border rounded-xl p-5 ${PRIORITY_CARD[fix.priority]}`}>
                   <div className="flex items-start gap-3 mb-2">
                     <span className={`text-xs font-mono uppercase px-2 py-0.5 rounded flex-shrink-0 ${PRIORITY_BADGE[fix.priority]}`}>
@@ -314,7 +329,7 @@ export default async function ReadinessPage({ params }: Props) {
                   })()}
                   <p className="text-slate-400 text-sm mb-3 leading-relaxed">{fix.fix_summary}</p>
                   <details className="group">
-                    <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-300 select-none">
+                    <summary className="text-xs text-slate-400 cursor-pointer hover:text-slate-300 select-none">
                       Show fix steps ({fix.fix_steps.length})
                     </summary>
                     <ol className="mt-3 space-y-1.5 list-decimal list-inside text-sm text-slate-300 leading-relaxed pl-1">
@@ -323,10 +338,10 @@ export default async function ReadinessPage({ params }: Props) {
                       ))}
                     </ol>
                     {fix.fix_platform && (
-                      <p className="mt-2 text-xs text-slate-500">Platform: {fix.fix_platform}</p>
+                      <p className="mt-2 text-xs text-slate-400">Platform: {fix.fix_platform}</p>
                     )}
                   </details>
-                  <p className="text-xs text-slate-600 mt-3">
+                  <p className="text-xs text-slate-400 mt-3">
                     Affects: {fix.affected_crawlers.join(', ')}
                   </p>
                 </div>
@@ -342,10 +357,10 @@ export default async function ReadinessPage({ params }: Props) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-800">
-                  <th className="text-left p-3 text-xs text-slate-500 font-mono uppercase tracking-wider">Bot</th>
-                  <th className="text-left p-3 text-xs text-slate-500 font-mono uppercase tracking-wider">Tier</th>
-                  <th className="text-left p-3 text-xs text-slate-500 font-mono uppercase tracking-wider">Result</th>
-                  <th className="text-left p-3 text-xs text-slate-500 font-mono uppercase tracking-wider hidden md:table-cell">Detail</th>
+                  <th className="text-left p-3 text-xs text-slate-400 font-mono uppercase tracking-wider">Bot</th>
+                  <th className="text-left p-3 text-xs text-slate-400 font-mono uppercase tracking-wider">Tier</th>
+                  <th className="text-left p-3 text-xs text-slate-400 font-mono uppercase tracking-wider">Result</th>
+                  <th className="text-left p-3 text-xs text-slate-400 font-mono uppercase tracking-wider hidden md:table-cell">Detail</th>
                 </tr>
               </thead>
               <tbody>
@@ -365,7 +380,7 @@ export default async function ReadinessPage({ params }: Props) {
                           {result.label}
                         </span>
                       </td>
-                      <td className="p-3 text-slate-500 text-xs hidden md:table-cell max-w-xs truncate">
+                      <td className="p-3 text-slate-400 text-xs hidden md:table-cell max-w-xs truncate">
                         {r.blocker_detail}
                       </td>
                     </tr>
@@ -383,7 +398,7 @@ export default async function ReadinessPage({ params }: Props) {
             Prequire can help you confirm how the real AI crawlers reach your site and fix the issues that are real —
             without weakening your security.
           </p>
-          <FixGapsLink href={fix} label="Ask Prequire to help" size="lg" />
+          <FixGapsLink href={fixLink} label="Ask Prequire to help" size="lg" />
         </div>
 
       </section>

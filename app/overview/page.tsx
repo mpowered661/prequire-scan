@@ -233,7 +233,7 @@ function OverviewPageInner() {
       : null;
 
   return (
-    <main className="min-h-screen bg-[#060d18] text-slate-100">
+    <main id="main-content" className="min-h-screen bg-[#060d18] text-slate-100">
       {/* Top bar */}
       <div className="border-b border-slate-800">
         <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">

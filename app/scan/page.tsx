@@ -56,7 +56,7 @@ function ScanProgress({ stage, message }: { stage: StageKey | null; message: str
                 }`}
               />
               <span className={`text-xs transition-colors duration-300 ${
-                done ? 'text-slate-300' : 'text-slate-600'
+                done ? 'text-slate-300' : 'text-slate-400'
               }`}>
                 {s.label}
               </span>
@@ -215,7 +215,7 @@ function ScanPageInner() {
   const fix = fixHref({ url: scannedUrl, scanId });
 
   return (
-    <main className="min-h-screen bg-[#060d18] text-slate-100">
+    <main id="main-content" className="min-h-screen bg-[#060d18] text-slate-100">
       {/* Hero */}
       <section className="max-w-3xl mx-auto px-4 pt-20 pb-12 text-center">
         <div className="inline-flex items-center gap-2 bg-orange-500/10 border border-orange-500/20 rounded-full px-4 py-1.5 mb-6">
@@ -252,7 +252,7 @@ function ScanPageInner() {
           <button
             type="submit"
             disabled={loading || !url.trim()}
-            className="bg-orange-500 hover:bg-orange-400 disabled:bg-orange-500/40 disabled:cursor-not-allowed text-white font-semibold px-6 py-3 rounded-xl transition-colors whitespace-nowrap"
+            className="bg-orange-500 hover:bg-orange-400 disabled:bg-orange-500/40 disabled:cursor-not-allowed text-slate-950 font-semibold px-6 py-3 rounded-xl transition-colors whitespace-nowrap"
           >
             {loading ? 'Scanning…' : 'Scan Page'}
           </button>
@@ -272,7 +272,7 @@ function ScanPageInner() {
           <div className="bg-[#0d1525] border border-slate-800 rounded-2xl p-8 mb-8 flex flex-col sm:flex-row items-center gap-8">
             <ScoreGauge score={result.overallScore} />
             <div className="text-center sm:text-left">
-              <p className="text-xs font-mono text-slate-500 mb-1 truncate max-w-xs">
+              <p className="text-xs font-mono text-slate-400 mb-1 truncate max-w-xs">
                 {scannedUrl}
               </p>
               <h2 className="text-2xl font-bold mb-2">{label}</h2>

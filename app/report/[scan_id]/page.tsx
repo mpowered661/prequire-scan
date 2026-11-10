@@ -54,7 +54,7 @@ export default async function ReportPage({ params }: Props) {
   });
 
   return (
-    <main className="min-h-screen bg-[#060d18] text-slate-100">
+    <main id="main-content" className="min-h-screen bg-[#060d18] text-slate-100">
       {/* Header */}
       <section className="max-w-5xl mx-auto px-4 pt-16 pb-10">
         <div className="flex items-center gap-2 mb-6">
@@ -66,10 +66,10 @@ export default async function ReportPage({ params }: Props) {
         <div className="bg-[#0d1525] border border-slate-800 rounded-2xl p-8 mb-8 flex flex-col sm:flex-row items-center gap-8">
           <ScoreGauge score={result.overallScore} />
           <div className="text-center sm:text-left flex-1">
-            <p className="text-xs font-mono text-slate-500 mb-1 truncate max-w-xs">{row.url}</p>
+            <p className="text-xs font-mono text-slate-400 mb-1 truncate max-w-xs">{row.url}</p>
             <h1 className="text-2xl font-bold mb-2">{label}</h1>
             <p className="text-slate-400 text-sm leading-relaxed max-w-md">{result.summary}</p>
-            <p className="text-xs text-slate-600 mt-3">Scanned {scannedAt}</p>
+            <p className="text-xs text-slate-400 mt-3">Scanned {scannedAt}</p>
           </div>
           <div className="sm:ml-auto flex-shrink-0">
             <FixGapsLink href={fix} />
