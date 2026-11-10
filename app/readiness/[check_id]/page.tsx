@@ -2,26 +2,42 @@ import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { getReadinessCheck } from '@/lib/supabase/readinessChecks';
 import { CRAWLERS } from '@/lib/aeo-readiness/crawlers';
-import type { FixPriority, OverallStatus, CrawlerTier } from '@/lib/aeo-readiness/types';
-import { scoreSurface } from '@/lib/aeo-readiness/score-surface';
+import type { FixPriority, CrawlerTier } from '@/lib/aeo-readiness/types';
+import { visibilityView, resultLabel, type ResultTone, type VisibilityView } from '@/lib/aeo-readiness/score-surface';
+import { bandLabel, scoreTone } from '@/lib/scanUtils';
+import { FixGapsLink } from '@/components/FixGapsLink';
+import { fixHref } from '@/lib/fixLink';
 
 interface Props {
   params: Promise<{ check_id: string }>;
 }
 
-function scoreStyle(score: number): { label: string; textClass: string; borderClass: string } {
-  if (score >= 80) return { label: 'Excellent', textClass: 'text-green-400', borderClass: 'border-green-500' };
-  if (score >= 60) return { label: 'Good', textClass: 'text-amber-400', borderClass: 'border-amber-500' };
-  if (score >= 40) return { label: 'Fair', textClass: 'text-orange-400', borderClass: 'border-orange-500' };
-  return { label: 'Poor', textClass: 'text-red-400', borderClass: 'border-red-500' };
+const TONE_TEXT: Record<ResultTone, string> = {
+  positive: 'text-green-400',
+  caution: 'text-amber-400',
+  negative: 'text-red-400',
+  neutral: 'text-slate-400',
+};
+
+// The score a page may headline: a legacy report's stored score (no basis was
+// measured), or a sufficient-coverage score. Insufficient coverage headlines none.
+function headlineScore(view: VisibilityView): number | null {
+  if (view.state === 'legacy') return view.score;
+  return view.state === 'sufficient' ? view.score : null;
 }
 
-const STATUS_COLOR: Record<OverallStatus, string> = {
-  accessible: 'text-green-400',
-  partial: 'text-amber-400',
-  blocked: 'text-red-400',
-  undeterminable: 'text-slate-400',
-};
+function describe(view: VisibilityView, hostname: string): string {
+  if (view.state === 'legacy') return `${hostname} scored ${view.score}/100 for AI crawler accessibility.`;
+  const { total, undeterminable, determinable } = view.simulated;
+  if (view.state === 'insufficient') {
+    return `${undeterminable} of ${total} simulated AI crawler requests could not be verified${
+      view.score !== null ? `; determinable signals: ${view.score}/100 (${determinable} of ${total})` : ''
+    }. No accessibility score is claimed.`;
+  }
+  return `${hostname} scored ${view.score}/100 on ${determinable} of ${total} simulated crawler requests${
+    undeterminable ? ` (${undeterminable} undeterminable)` : ''
+  }. ${bandLabel(view.score ?? 0)}.`;
+}
 
 const PRIORITY_CARD: Record<FixPriority, string> = {
   critical: 'border-red-500/30 bg-red-500/5',
@@ -51,34 +67,24 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const row = await getReadinessCheck(check_id);
   if (!row) return { title: 'Report not found — Prequire' };
 
-  const { label } = scoreStyle(row.score);
   const hostname = (() => { try { return new URL(row.url).hostname; } catch { return row.url; } })();
-  const surface = scoreSurface(row.report.summary);
+  const view = visibilityView(row.report);
+  const shown = headlineScore(view);
 
   // Mirrors the on-page score surface: a score never appears without its basis,
-  // and a low-coverage report does not headline a score at all.
+  // and insufficient coverage does not headline a score at all.
   const headline =
-    surface.state === 'low_coverage'
-      ? `AI Crawler Accessibility: ${hostname} — undeterminable for ${surface.undeterminable} of ${surface.total} crawlers`
-      : `AI Crawler Accessibility: ${hostname} scores ${row.score}/100`;
-  const description =
-    surface.state === 'low_coverage'
-      ? `${surface.undeterminable} of ${surface.total} AI crawlers could not be verified by UA simulation. Determinable signals: ${row.score}/100 (${surface.determinable} of ${surface.total}).`
-      : surface.state === 'reduced'
-      ? `${hostname} scored ${row.score}/100 on ${surface.determinable} of ${surface.total} determinable signals (${surface.undeterminable} undeterminable). ${label}.`
-      : surface.state === 'clean'
-      ? `${hostname} scored ${row.score}/100 for AI crawler accessibility — all ${surface.total} crawlers determinable. ${label}.`
-      : `${hostname} scored ${row.score}/100 for AI crawler accessibility. ${label}. ${row.report.summary.accessible}/${row.report.summary.total_crawlers_tested} AI crawlers have full access.`;
+    shown === null
+      ? `AI Crawler Accessibility: ${hostname} — not verified by simulation`
+      : `AI Crawler Accessibility: ${hostname} scores ${shown}/100`;
+  const description = describe(view, hostname);
 
   return {
     title: `Crawler Accessibility: ${hostname} — Prequire`,
     description,
     openGraph: {
       title: headline,
-      description:
-        surface.state === 'low_coverage'
-          ? description
-          : `${label}. ${row.report.summary.blocked} crawlers blocked, ${row.report.summary.partial} partial. See the full breakdown and fix recommendations.`,
+      description,
       url: `https://scan.prequire.ai/readiness/${check_id}`,
       siteName: 'Prequire',
       type: 'website',
@@ -86,7 +92,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     twitter: {
       card: 'summary',
       title: headline,
-      description: surface.state === 'low_coverage' ? description : `${label}. See the full breakdown and fixes.`,
+      description,
     },
   };
 }
@@ -96,9 +102,10 @@ export default async function ReadinessPage({ params }: Props) {
   const row = await getReadinessCheck(check_id);
   if (!row) notFound();
 
-  const { report, score } = row;
-  const { label, textClass, borderClass } = scoreStyle(score);
-  const surface = scoreSurface(report.summary);
+  const { report } = row;
+  const view = visibilityView(report);
+  const shown = headlineScore(view);
+  const fix = fixHref({ url: row.url, checkId: check_id });
   const hostname = (() => { try { return new URL(row.url).hostname; } catch { return row.url; } })();
   const testedAt = new Date(report.tested_at).toLocaleDateString('en-US', {
     year: 'numeric', month: 'long', day: 'numeric',
@@ -123,87 +130,123 @@ export default async function ReadinessPage({ params }: Props) {
         </div>
 
         {/* Hero — the score never renders without its basis.
-            legacy: score + label only (a pre-2026-07 scan measured no coverage — assert none)
-            clean/reduced: score headlines with its basis co-equal
-            low_coverage: the score is demoted; "Undeterminable" headlines */}
+            legacy: stored score + label only (a pre-2026-07 scan measured no coverage — assert none)
+            sufficient: score over simulated requests, with its basis
+            insufficient: no score; what could not be verified headlines.
+            robots.txt tokens are permissions, reported apart from access. */}
         <div className="bg-[#0d1525] border border-slate-800 rounded-2xl p-8 mb-6 flex flex-col sm:flex-row items-center gap-6">
-          {surface.state === 'low_coverage' ? (
+          {shown === null ? (
             <div className="w-24 h-24 rounded-full border-4 border-slate-600 flex items-center justify-center flex-shrink-0">
-              <span className="text-xl font-bold text-slate-400">{surface.undeterminable}/{surface.total}</span>
+              <span className="text-xl font-bold text-slate-300">
+                {view.state === 'legacy' ? '—' : `${view.simulated.undeterminable}/${view.simulated.total}`}
+              </span>
             </div>
           ) : (
-            <div className={`w-24 h-24 rounded-full border-4 ${surface.state === 'reduced' ? 'border-slate-500' : borderClass} flex items-center justify-center flex-shrink-0`}>
-              <span className={`text-3xl font-bold ${textClass}`}>{score}</span>
+            <div className={`w-24 h-24 rounded-full border-4 ${scoreTone(shown).border} flex items-center justify-center flex-shrink-0`}>
+              <span className={`text-3xl font-bold ${scoreTone(shown).text}`}>{shown}</span>
             </div>
           )}
           <div className="flex-1 text-center sm:text-left">
-            <p className="text-xs font-mono text-slate-500 mb-1 truncate max-w-xs">{hostname}</p>
-            {surface.state === 'low_coverage' ? (
+            <p className="text-xs font-mono text-slate-400 mb-1 truncate max-w-xs">{hostname}</p>
+            {view.state === 'legacy' ? (
+              <h1 className="text-xl font-bold mb-1">{bandLabel(view.score)} — AI Crawler Accessibility</h1>
+            ) : view.state === 'insufficient' ? (
               <>
-                <h1 className="text-xl font-bold mb-1">Undeterminable — AI Crawler Accessibility</h1>
-                <p className="text-xl font-bold text-slate-400 mb-1">
-                  {surface.undeterminable} of {surface.total} crawlers could not be verified by UA simulation
+                <h1 className="text-xl font-bold mb-1">Not verified — AI Crawler Accessibility</h1>
+                <p className="text-lg font-bold text-slate-300 mb-1">
+                  {view.simulated.undeterminable} of {view.simulated.total} simulated crawler requests could not be verified
                 </p>
                 <p className="text-slate-400 text-sm">
-                  {surface.determinable === 0
-                    ? `0 of ${surface.total} determinable — no score`
-                    : `Determinable signals: ${score} · ${surface.determinable} of ${surface.total}`}
+                  {view.score === null
+                    ? 'No simulated request was determinable — no score'
+                    : `Determinable signals: ${view.score} · ${view.simulated.determinable} of ${view.simulated.total}`}
                 </p>
               </>
             ) : (
               <>
-                <h1 className="text-xl font-bold mb-1">{label} — AI Crawler Accessibility</h1>
-                {surface.state === 'reduced' && (
-                  <p className="text-xl font-bold text-slate-300 mb-1">
-                    {surface.determinable} of {surface.total} signals · {surface.undeterminable} undeterminable
+                <h1 className="text-xl font-bold mb-1">{bandLabel(view.score ?? 0)} — AI Crawler Accessibility</h1>
+                <p className="text-lg font-bold text-slate-300 mb-1">
+                  Based on {view.simulated.determinable} of {view.simulated.total} simulated crawler requests
+                  {view.simulated.undeterminable > 0 && ` · ${view.simulated.undeterminable} undeterminable`}
+                </p>
+              </>
+            )}
+            {view.state !== 'legacy' && (
+              <>
+                <p className="text-slate-400 text-sm">
+                  {view.simulated.accessible} of {view.simulated.total} simulated requests received page content
+                </p>
+                {view.robotsTokens.total > 0 && (
+                  <p className="text-slate-400 text-sm">
+                    robots.txt permits {view.robotsTokens.permitted} of {view.robotsTokens.total} AI-use tokens
+                    (a permission only — these tokens are never requested)
                   </p>
-                )}
-                {surface.state === 'clean' && (
-                  <p className="text-slate-400 text-sm">All {surface.total} crawlers determinable</p>
                 )}
               </>
             )}
-            <p className="text-slate-400 text-sm">
-              {report.summary.accessible} of {report.summary.total_crawlers_tested} AI crawlers have full access
-            </p>
-            <p className="text-xs text-slate-600 mt-2">Tested {testedAt}</p>
+            <p className="text-xs text-slate-400 mt-2">Tested {testedAt}</p>
           </div>
           <div className="flex-shrink-0">
-            <a href="https://prequire.ai/#pricing" className="bg-orange-500 hover:bg-orange-400 text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm">
-              Fix these gaps →
-            </a>
+            <FixGapsLink href={fix} />
           </div>
         </div>
 
-        {/* Summary counts — legacy reports keep their original three tiles;
-            they measured no undeterminable count, so none is asserted */}
-        <div className={`grid ${surface.state === 'legacy' ? 'grid-cols-3' : 'grid-cols-2 sm:grid-cols-4'} gap-4 mb-6`}>
-          <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4 text-center">
-            <div className="text-2xl font-bold text-green-400">{report.summary.accessible}</div>
-            <div className="text-xs text-slate-400 mt-1">Accessible</div>
-          </div>
-          <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 text-center">
-            <div className="text-2xl font-bold text-amber-400">{report.summary.partial}</div>
-            <div className="text-xs text-slate-400 mt-1">Partial Access</div>
-          </div>
-          <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-center">
-            <div className="text-2xl font-bold text-red-400">{report.summary.blocked}</div>
-            <div className="text-xs text-slate-400 mt-1">Blocked</div>
-          </div>
-          {surface.state !== 'legacy' && (
-            <div className="bg-slate-500/10 border border-slate-500/20 rounded-xl p-4 text-center">
-              <div className="text-2xl font-bold text-slate-400">{report.summary.undeterminable}</div>
-              <div className="text-xs text-slate-400 mt-1">Undeterminable</div>
+        {/* Summary counts — simulated requests only; robots.txt tokens are not
+            access. Legacy reports keep their original three tiles: they measured
+            no undeterminable count, so none is asserted. */}
+        {view.state === 'legacy' ? (
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4 text-center">
+              <div className="text-2xl font-bold text-green-400">{report.summary.accessible}</div>
+              <div className="text-xs text-slate-400 mt-1">Accessible</div>
             </div>
-          )}
-        </div>
-
-        {surface.state !== 'legacy' && (report.summary.undeterminable ?? 0) > 0 && (
-          <p className="text-xs text-slate-500 mb-6">
-            Undeterminable: this check simulates crawler user-agents but cannot present
-            verified crawler IP addresses. Sites that verify crawler IPs may treat the
-            real crawlers differently than these simulations.
-          </p>
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 text-center">
+              <div className="text-2xl font-bold text-amber-400">{report.summary.partial}</div>
+              <div className="text-xs text-slate-400 mt-1">Partial Access</div>
+            </div>
+            <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-center">
+              <div className="text-2xl font-bold text-red-400">{report.summary.blocked}</div>
+              <div className="text-xs text-slate-400 mt-1">Blocked</div>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+              <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4 text-center">
+                <div className="text-2xl font-bold text-green-400">{view.simulated.accessible}</div>
+                <div className="text-xs text-slate-400 mt-1">Content received (simulated)</div>
+              </div>
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 text-center">
+                <div className="text-2xl font-bold text-amber-400">{view.simulated.partial}</div>
+                <div className="text-xs text-slate-400 mt-1">Partial content</div>
+              </div>
+              <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-center">
+                <div className="text-2xl font-bold text-red-400">{view.simulated.blocked}</div>
+                <div className="text-xs text-slate-400 mt-1">Blocked</div>
+              </div>
+              <div className="bg-slate-500/10 border border-slate-500/20 rounded-xl p-4 text-center">
+                <div className="text-2xl font-bold text-slate-300">{view.simulated.undeterminable}</div>
+                <div className="text-xs text-slate-400 mt-1">Undeterminable</div>
+              </div>
+            </div>
+            <div className="text-xs text-slate-400 mb-6 space-y-1 leading-relaxed">
+              <p>
+                <strong className="text-slate-300">Simulated:</strong> we requested your page with each crawler&apos;s
+                user-agent from our own servers, not from the crawler&apos;s verified IP addresses. Your security may
+                treat the real crawlers differently.
+              </p>
+              <p>
+                <strong className="text-slate-300">Undeterminable:</strong> the simulated request was challenged,
+                refused, or hit a server error or timeout. This is not evidence that the real crawler is blocked.
+              </p>
+              {view.robotsTokens.total > 0 && (
+                <p>
+                  <strong className="text-slate-300">robots.txt tokens</strong> (such as Google-Extended) record a
+                  permission only. They are never requested, so they say nothing about access.
+                </p>
+              )}
+            </div>
+          </>
         )}
 
         {/* Stack + llms.txt */}
@@ -301,13 +344,14 @@ export default async function ReadinessPage({ params }: Props) {
                 <tr className="border-b border-slate-800">
                   <th className="text-left p-3 text-xs text-slate-500 font-mono uppercase tracking-wider">Bot</th>
                   <th className="text-left p-3 text-xs text-slate-500 font-mono uppercase tracking-wider">Tier</th>
-                  <th className="text-left p-3 text-xs text-slate-500 font-mono uppercase tracking-wider">Status</th>
+                  <th className="text-left p-3 text-xs text-slate-500 font-mono uppercase tracking-wider">Result</th>
                   <th className="text-left p-3 text-xs text-slate-500 font-mono uppercase tracking-wider hidden md:table-cell">Detail</th>
                 </tr>
               </thead>
               <tbody>
                 {report.crawler_results.map((r, i) => {
                   const tier = tierMap.get(r.crawler_name) ?? 'other';
+                  const result = resultLabel(r);
                   return (
                     <tr key={i} className="border-b border-slate-800/50 last:border-0 hover:bg-slate-800/20">
                       <td className="p-3 font-mono text-xs">{r.crawler_name}</td>
@@ -317,8 +361,8 @@ export default async function ReadinessPage({ params }: Props) {
                         </span>
                       </td>
                       <td className="p-3">
-                        <span className={`text-xs font-semibold capitalize ${STATUS_COLOR[r.overall_status]}`}>
-                          {r.overall_status}
+                        <span className={`text-xs font-semibold ${TONE_TEXT[result.tone]}`}>
+                          {result.label}
                         </span>
                       </td>
                       <td className="p-3 text-slate-500 text-xs hidden md:table-cell max-w-xs truncate">
@@ -334,16 +378,12 @@ export default async function ReadinessPage({ params }: Props) {
 
         {/* CTA */}
         <div className="bg-gradient-to-r from-orange-500/10 to-orange-600/5 border border-orange-500/20 rounded-2xl p-8 text-center">
-          <h2 className="text-xl font-bold mb-2">Ready to get cited by AI engines?</h2>
+          <h2 className="text-xl font-bold mb-2">Want help acting on this?</h2>
           <p className="text-slate-400 text-sm mb-5 max-w-md mx-auto">
-            Prequire helps you fix crawler access issues and publish atomic pages that ChatGPT, Claude, and Perplexity actually cite.
+            Prequire can help you confirm how the real AI crawlers reach your site and fix the issues that are real —
+            without weakening your security.
           </p>
-          <a
-            href="https://prequire.ai/#pricing"
-            className="inline-block bg-orange-500 hover:bg-orange-400 text-white font-semibold px-8 py-3 rounded-xl transition-colors"
-          >
-            See plans &amp; pricing
-          </a>
+          <FixGapsLink href={fix} label="Ask Prequire to help" size="lg" />
         </div>
 
       </section>

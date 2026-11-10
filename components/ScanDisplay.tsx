@@ -3,14 +3,22 @@
 import type { ScanResult, CategoryResult, CheckItem } from '@/lib/scanPrompt';
 export type { ScanResult, CategoryResult, CheckItem };
 
+import {
+  scoreTone,
+  accessibilitySummary,
+  accessibilitySummaryText,
+  ACCESSIBILITY_DISCLAIMER,
+} from '@/lib/scanUtils';
+
 export { CATEGORIES, scoreLabel } from '@/lib/scanUtils';
 
+// This gauge shows the citation scan's score. It is not the overall AEO score,
+// which also needs verified crawler visibility, so it is labelled for what it is.
 export function ScoreGauge({ score }: { score: number }) {
   const radius = 54;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (score / 100) * circumference;
-  const color =
-    score >= 70 ? '#22c55e' : score >= 45 ? '#f97316' : '#ef4444';
+  const color = scoreTone(score).stroke;
 
   return (
     <div className="relative w-36 h-36 mx-auto">
@@ -36,7 +44,11 @@ export function ScoreGauge({ score }: { score: number }) {
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span className="text-4xl font-bold text-white">{score}</span>
-        <span className="text-xs text-slate-400 uppercase tracking-widest">AEO Score</span>
+        <span className="text-[10px] leading-tight text-slate-400 uppercase tracking-wider text-center">
+          Citation
+          <br />
+          readiness
+        </span>
       </div>
     </div>
   );
@@ -67,34 +79,46 @@ export function CheckRow({ check }: { check: CheckItem }) {
 const FREE_RECS = 2;
 
 export function CategoryCard({
+  categoryKey,
   label,
   icon,
   data,
   isUnlocked,
+  fixHref,
 }: {
+  categoryKey: string;
   label: string;
   icon: string;
   data: CategoryResult;
   isUnlocked: boolean;
+  fixHref: string;
 }) {
-  const color =
-    data.score >= 70 ? 'text-green-400' : data.score >= 45 ? 'text-orange-400' : 'text-red-400';
-  const barColor =
-    data.score >= 70 ? 'bg-green-500' : data.score >= 45 ? 'bg-orange-400' : 'bg-red-500';
+  const tone = scoreTone(data.score);
+  // Static-HTML accessibility is shown as check counts with its limits stated,
+  // never as a 0–100 bar that would read as a full accessibility audit.
+  const isAccessibility = categoryKey === 'accessibility';
+  const a11y = isAccessibility ? accessibilitySummary(data.checks) : null;
 
   return (
     <div className="bg-[#0d1525] border border-slate-800 rounded-2xl p-6">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <span className="text-xl">{icon}</span>
+          <span className="text-xl" aria-hidden="true">{icon}</span>
           <h3 className="font-semibold text-slate-100 text-lg">{label}</h3>
         </div>
-        <span className={`text-2xl font-bold ${color}`}>{data.score}</span>
+        {!a11y && <span className={`text-2xl font-bold ${tone.text}`}>{data.score}</span>}
       </div>
 
-      <div className="h-1.5 bg-slate-800 rounded-full mb-5 overflow-hidden">
-        <div className={`h-full ${barColor} rounded-full transition-all duration-1000`} style={{ width: `${data.score}%` }} />
-      </div>
+      {a11y ? (
+        <div className="mb-5">
+          <p className="text-sm font-semibold text-slate-200">{accessibilitySummaryText(a11y)}</p>
+          <p className="text-xs text-slate-400 mt-1 leading-relaxed">{ACCESSIBILITY_DISCLAIMER}</p>
+        </div>
+      ) : (
+        <div className="h-1.5 bg-slate-800 rounded-full mb-5 overflow-hidden">
+          <div className={`h-full ${tone.bar} rounded-full transition-all duration-1000`} style={{ width: `${data.score}%` }} />
+        </div>
+      )}
 
       <div className="divide-y divide-slate-800/60 mb-5">
         {data.checks.map((c, i) => (
@@ -126,10 +150,10 @@ export function CategoryCard({
               </div>
               <div className="absolute inset-0 flex items-center justify-center">
                 <a
-                  href="https://prequire.ai/#pricing"
+                  href={fixHref}
                   className="bg-orange-500 hover:bg-orange-400 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
                 >
-                  Get full access →
+                  Ask Prequire about these →
                 </a>
               </div>
             </li>

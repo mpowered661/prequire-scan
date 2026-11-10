@@ -4,9 +4,18 @@ import { useState, useRef, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { ScanResult } from '@/lib/scanPrompt';
 import type { AeoReadinessReport } from '@/lib/aeo-readiness/types';
-import { scoreSurface } from '@/lib/aeo-readiness/score-surface';
+import { visibilityView, overallScore } from '@/lib/aeo-readiness/score-surface';
 import { EmailReportForm } from '@/components/EmailReportForm';
-import { scoreBand } from '@/lib/scanUtils';
+import { FixGapsLink } from '@/components/FixGapsLink';
+import { fixHref } from '@/lib/fixLink';
+import {
+  scoreBand,
+  bandLabel,
+  scoreTone,
+  accessibilitySummary,
+  accessibilitySummaryText,
+  ACCESSIBILITY_DISCLAIMER,
+} from '@/lib/scanUtils';
 import { track } from '@/lib/track';
 import { requestHomepageReport, type ReportRequestOutcome } from '@/lib/reportQueue';
 
@@ -32,22 +41,17 @@ type CitationState =
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// Labels and colours come from scanUtils so every page uses one set of thresholds.
 function scoreColor(score: number): string {
-  if (score >= 80) return 'text-green-400';
-  if (score >= 60) return 'text-yellow-400';
-  return 'text-red-400';
+  return scoreTone(score).text;
 }
 
 function scoreLabel(score: number): string {
-  if (score >= 80) return 'Strong';
-  if (score >= 60) return 'Needs work';
-  return 'At risk';
+  return bandLabel(score);
 }
 
 function scoreBg(score: number): string {
-  if (score >= 80) return 'bg-green-500/10 border-green-500/20';
-  if (score >= 60) return 'bg-yellow-500/10 border-yellow-500/20';
-  return 'bg-red-500/10 border-red-500/20';
+  return scoreTone(score).bg;
 }
 
 function Spinner() {
@@ -213,17 +217,20 @@ function OverviewPageInner() {
     }
   })();
 
-  const visScore = vis.status === 'done' ? vis.score : null;
+  const visView = vis.status === 'done' ? visibilityView(vis.report) : null;
   const citScore = cit.status === 'done' ? cit.score : null;
-  const combinedScore =
-    visScore !== null && citScore !== null
-      ? Math.round((visScore + citScore) / 2)
-      : null;
+  // An overall AEO score exists only when crawler visibility rests on sufficient
+  // verified coverage; otherwise the citation score is presented on its own.
+  const combinedScore = visView && citScore !== null ? overallScore(visView, citScore) : null;
+  const citationOnly = visView !== null && citScore !== null && combinedScore === null;
 
-  // Show a note on citation card if visibility is blocked
-  const visBlocked =
-    vis.status === 'done' &&
-    (vis.report.summary.blocked > 0 || vis.score < 60);
+  // Show a note on citation card only for blocks that were actually observed.
+  const visBlocked = visView !== null && visView.state !== 'legacy' && visView.simulated.blocked > 0;
+
+  const fix =
+    cit.status === 'done'
+      ? fixHref({ url: cit.url, scanId: cit.scanId, checkId: vis.status === 'done' ? vis.checkId : null })
+      : null;
 
   return (
     <main className="min-h-screen bg-[#060d18] text-slate-100">
@@ -236,13 +243,13 @@ function OverviewPageInner() {
           >
             ← Run another scan
           </a>
-          {combinedScore !== null && (
+          {(combinedScore !== null || (citationOnly && citScore !== null)) && (
             <div className="flex items-center gap-2">
               <span className="text-xs font-mono text-slate-400 uppercase tracking-wider">
-                Prequire AEO Score
+                {combinedScore !== null ? 'Prequire AEO Score' : 'Citation readiness'}
               </span>
-              <span className={`text-xl font-bold font-mono ${scoreColor(combinedScore)}`}>
-                {combinedScore}
+              <span className={`text-xl font-bold font-mono ${scoreColor(combinedScore ?? citScore ?? 0)}`}>
+                {combinedScore ?? citScore}
                 <span className="text-sm text-slate-400">/100</span>
               </span>
             </div>
@@ -271,7 +278,32 @@ function OverviewPageInner() {
                 {scoreLabel(combinedScore)}
               </p>
               <p className="text-sm text-slate-400 mt-0.5">Prequire AEO Score</p>
-              <p className="text-xs text-slate-400 mt-1">50/50 average of Visibility + Citation</p>
+              <p className="text-xs text-slate-400 mt-1">
+                50/50 average of Visibility + Citation
+                {visView && visView.state === 'sufficient' &&
+                  ` · visibility based on ${visView.simulated.determinable} of ${visView.simulated.total} simulated crawler requests`}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* No overall score: visibility could not be verified, so the citation
+            score — which stands on its own evidence — headlines alone. */}
+        {citationOnly && citScore !== null && visView && (
+          <div className={`border rounded-2xl p-6 flex items-center gap-6 ${scoreBg(citScore)}`}>
+            <div className="text-center">
+              <div className={`text-5xl font-bold font-mono ${scoreColor(citScore)}`}>{citScore}</div>
+              <div className="text-xs text-slate-400 mt-1">/ 100</div>
+            </div>
+            <div>
+              <p className={`text-lg font-semibold ${scoreColor(citScore)}`}>{scoreLabel(citScore)}</p>
+              <p className="text-sm text-slate-300 mt-0.5">Citation readiness</p>
+              <p className="text-xs text-slate-400 mt-1">
+                No overall AEO score: AI crawler access could not be verified
+                {visView.state !== 'legacy' &&
+                  ` (${visView.simulated.undeterminable} of ${visView.simulated.total} simulated requests undeterminable)`}
+                . The citation score stands on its own.
+              </p>
             </div>
           </div>
         )}
@@ -314,52 +346,45 @@ function OverviewPageInner() {
               </div>
             )}
 
-            {vis.status === 'done' && (
+            {vis.status === 'done' && visView && visView.state !== 'legacy' && (
               <div className="space-y-4">
-                {(() => {
-                  const surface = scoreSurface(vis.report.summary);
-                  if (surface.state === 'low_coverage') {
-                    return (
-                      <div>
-                        <div className="flex items-end gap-3">
-                          <span className="text-4xl font-bold font-mono text-slate-400">—</span>
-                          <span className="text-slate-400 text-sm pb-1">Undeterminable</span>
-                        </div>
-                        <p className="text-xs text-slate-400 mt-1">
-                          {surface.undeterminable} of {surface.total} crawlers could not be verified by UA simulation
-                          {surface.determinable > 0 &&
-                            ` — determinable signals: ${vis.score}/100 (${surface.determinable} of ${surface.total})`}
-                        </p>
-                      </div>
-                    );
-                  }
-                  return (
-                    <div>
-                      <div className="flex items-end gap-3">
-                        <span className={`text-4xl font-bold font-mono ${scoreColor(vis.score)}`}>
-                          {vis.score}
-                        </span>
-                        <span className="text-slate-400 text-sm pb-1">/ 100</span>
-                        <span className={`text-sm pb-1 ${scoreColor(vis.score)}`}>
-                          {scoreLabel(vis.score)}
-                        </span>
-                      </div>
-                      {surface.state === 'reduced' && (
-                        <p className="text-xs font-semibold text-slate-400 mt-1">
-                          {surface.determinable} of {surface.total} signals · {surface.undeterminable} undeterminable
-                        </p>
-                      )}
+                {visView.state === 'insufficient' ? (
+                  <div>
+                    <div className="flex items-end gap-3">
+                      <span className="text-4xl font-bold font-mono text-slate-400">—</span>
+                      <span className="text-slate-300 text-sm pb-1">Not verified</span>
                     </div>
-                  );
-                })()}
+                    <p className="text-xs text-slate-400 mt-1">
+                      {visView.simulated.undeterminable} of {visView.simulated.total} simulated crawler requests could not be verified
+                      {visView.score !== null &&
+                        ` — determinable signals: ${visView.score}/100 (${visView.simulated.determinable} of ${visView.simulated.total})`}
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="flex items-end gap-3">
+                      <span className={`text-4xl font-bold font-mono ${scoreColor(visView.score ?? 0)}`}>
+                        {visView.score}
+                      </span>
+                      <span className="text-slate-400 text-sm pb-1">/ 100</span>
+                      <span className={`text-sm pb-1 ${scoreColor(visView.score ?? 0)}`}>
+                        {scoreLabel(visView.score ?? 0)}
+                      </span>
+                    </div>
+                    <p className="text-xs font-semibold text-slate-400 mt-1">
+                      Based on {visView.simulated.determinable} of {visView.simulated.total} simulated crawler requests
+                      {visView.simulated.undeterminable > 0 && ` · ${visView.simulated.undeterminable} undeterminable`}
+                    </p>
+                  </div>
+                )}
 
-                {/* Summary row */}
+                {/* Summary row — simulated requests only */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
                   {[
-                    { label: 'Accessible', val: vis.report.summary.accessible, color: 'text-green-400' },
-                    { label: 'Partial', val: vis.report.summary.partial, color: 'text-yellow-400' },
-                    { label: 'Blocked', val: vis.report.summary.blocked, color: 'text-red-400' },
-                    { label: 'Undeterminable', val: vis.report.summary.undeterminable ?? 0, color: 'text-slate-400' },
+                    { label: 'Content received', val: visView.simulated.accessible, color: 'text-green-400' },
+                    { label: 'Partial', val: visView.simulated.partial, color: 'text-yellow-400' },
+                    { label: 'Blocked', val: visView.simulated.blocked, color: 'text-red-400' },
+                    { label: 'Undeterminable', val: visView.simulated.undeterminable, color: 'text-slate-300' },
                   ].map(({ label, val, color }) => (
                     <div key={label} className="bg-slate-800/50 rounded-lg py-2">
                       <div className={`text-xl font-bold font-mono ${color}`}>{val}</div>
@@ -368,13 +393,21 @@ function OverviewPageInner() {
                   ))}
                 </div>
 
+                <p className="text-xs text-slate-400">
+                  Simulated with crawler user-agents, not verified crawler IP addresses.
+                  {visView.robotsTokens.total > 0 &&
+                    ` robots.txt permits ${visView.robotsTokens.permitted} of ${visView.robotsTokens.total} AI-use tokens — a permission, not access.`}
+                </p>
+
                 {vis.report.llms_txt.present && (
                   <p className="text-xs text-green-400">
                     llms.txt detected
                   </p>
                 )}
 
-                {vis.report.summary.primary_blocker && (
+                {/* Only a block that was actually observed is called a blocker —
+                    challenges and refusals are undeterminable, not blocks. */}
+                {visBlocked && vis.report.summary.primary_blocker && (
                   <p className="text-xs text-yellow-400">
                     Primary blocker: {vis.report.summary.primary_blocker}
                   </p>
@@ -452,14 +485,26 @@ function OverviewPageInner() {
                         contentQuality: 'Content Quality',
                         schemaMarkup: 'Schema Markup',
                         performance: 'Performance',
-                        accessibility: 'Accessibility (HTML)',
+                        accessibility: 'Accessibility signals (static HTML)',
                       };
+                      if (key === 'accessibility') {
+                        const a11y = accessibilitySummary(cit.result.categories.accessibility.checks);
+                        return (
+                          <div key={key} className="flex items-start gap-3">
+                            <span className="text-xs text-slate-400 w-32 shrink-0">{labels[key]}</span>
+                            <span className="text-xs text-slate-300">
+                              {accessibilitySummaryText(a11y)}
+                              <span className="block text-slate-400 mt-0.5">{ACCESSIBILITY_DISCLAIMER}</span>
+                            </span>
+                          </div>
+                        );
+                      }
                       return (
                         <div key={key} className="flex items-center gap-3">
                           <span className="text-xs text-slate-400 w-32 shrink-0">{labels[key] ?? key}</span>
                           <div className="flex-1 bg-slate-800 rounded-full h-1.5">
                             <div
-                              className={`h-1.5 rounded-full ${cat.score >= 80 ? 'bg-green-500' : cat.score >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                              className={`h-1.5 rounded-full ${scoreTone(cat.score).bar}`}
                               style={{ width: `${cat.score}%` }}
                             />
                           </div>
@@ -498,6 +543,19 @@ function OverviewPageInner() {
           <div className="bg-[#0d1525] border border-slate-800 rounded-2xl p-5">
             <p className="text-xs font-mono text-slate-400 uppercase tracking-wider mb-2">Summary</p>
             <p className="text-sm text-slate-300 leading-relaxed">{cit.result.summary}</p>
+          </div>
+        )}
+
+        {/* Fix these gaps — carries the domain and both report links. */}
+        {fix && (
+          <div className="bg-gradient-to-r from-orange-500/10 to-orange-600/5 border border-orange-500/20 rounded-2xl p-6 flex flex-col sm:flex-row items-center gap-4">
+            <div className="flex-1 text-center sm:text-left">
+              <h2 className="text-lg font-bold">Want help fixing these gaps?</h2>
+              <p className="text-sm text-slate-400 mt-1">
+                Prequire can scope and implement these fixes for you. Send us this scan and we will reply by email with options.
+              </p>
+            </div>
+            <FixGapsLink href={fix} />
           </div>
         )}
 

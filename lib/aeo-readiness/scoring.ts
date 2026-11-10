@@ -1,4 +1,4 @@
-import type { CrawlerResult, CrawlerDefinition, CrawlerPurpose, PurposeBreakdown } from './types';
+import type { CrawlerResult, CrawlerDefinition, CrawlerPurpose, OverallStatus, PurposeBreakdown } from './types';
 
 const TIER_WEIGHTS: Record<string, number> = {
   critical: 4,
@@ -17,20 +17,45 @@ const STATUS_SCORE: Record<string, number> = {
 // contribute nothing to either side of the score — the score reflects only
 // determinable signals. The summary reports the undeterminable count separately.
 
+/**
+ * The verdict a result supports about access. A simulated request that hit a
+ * server error or timeout (stored before 2026-11 as 'blocked') proves nothing
+ * about blocking, so it reads as undeterminable.
+ */
+export function effectiveStatus(r: CrawlerResult): OverallStatus {
+  if (r.overall_status === 'blocked' && r.tests?.http_response?.status === 'error') {
+    return 'undeterminable';
+  }
+  return r.overall_status;
+}
+
+/**
+ * Robots.txt directive tokens (Google-Extended, Applebot-Extended) are never
+ * requested, so their verdict is a permission, not observed access. Identified by
+ * the registry, or — for stored results — by the not-applicable HTTP test.
+ */
+export function isRobotsToken(r: CrawlerResult, def?: CrawlerDefinition): boolean {
+  return def?.check_type === 'robots_only' || r.tests?.http_response?.status === 'not_applicable';
+}
+
 export function computeScore(
   results: CrawlerResult[],
   activeCrawlers: CrawlerDefinition[],
 ): number {
+  const defMap = new Map(activeCrawlers.map((c) => [c.name, c]));
   const weightMap = new Map(activeCrawlers.map((c) => [c.name, TIER_WEIGHTS[c.tier] ?? 1]));
 
   let totalWeight = 0;
   let earnedWeight = 0;
 
   for (const r of results) {
-    if (r.overall_status === 'undeterminable') continue; // excluded from denominator
+    // Only simulated requests measure access; a robots.txt permission does not.
+    if (isRobotsToken(r, defMap.get(r.crawler_name))) continue;
+    const status = effectiveStatus(r);
+    if (status === 'undeterminable') continue; // excluded from denominator
     const weight = weightMap.get(r.crawler_name) ?? 1;
     totalWeight += weight;
-    earnedWeight += weight * (STATUS_SCORE[r.overall_status] ?? 0);
+    earnedWeight += weight * (STATUS_SCORE[status] ?? 0);
   }
 
   if (totalWeight === 0) return 0;
@@ -63,7 +88,7 @@ export function computePurposeBreakdown(
   for (const r of results) {
     const purpose = purposeMap.get(r.crawler_name);
     if (!purpose) continue; // result with no registry definition — not classifiable
-    breakdown[purpose][r.overall_status] += 1;
+    breakdown[purpose][effectiveStatus(r)] += 1;
   }
 
   return breakdown;

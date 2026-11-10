@@ -88,7 +88,7 @@ function buildHttpResponse(
   };
 }
 
-function determineOverallStatus(tests: CrawlerTests): {
+export function determineOverallStatus(tests: CrawlerTests): {
   overall_status: OverallStatus;
   blocker_layer: BlockerLayer;
   blocker_detail: string;
@@ -145,11 +145,15 @@ function determineOverallStatus(tests: CrawlerTests): {
 
   // Transport failures are checked before the empty-body check: a failed fetch
   // also has an empty body, but "Connection error or timeout" is the truthful detail.
+  // A 5xx or timeout on one simulated request may be temporary and is not
+  // evidence of blocking, so the verdict is undeterminable, not blocked.
   if (tests.http_response.status === 'error') {
     return {
-      overall_status: 'blocked',
+      overall_status: 'undeterminable',
       blocker_layer: 'server_error',
-      blocker_detail: 'Connection error or timeout',
+      blocker_detail: `${
+        tests.http_response.status_code >= 500 ? `HTTP ${tests.http_response.status_code}` : 'Connection error or timeout'
+      } on the simulated request — may be temporary; not evidence of blocking`,
     };
   }
 
