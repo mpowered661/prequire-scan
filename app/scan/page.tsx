@@ -8,6 +8,8 @@ import { EmailReportForm } from '@/components/EmailReportForm';
 import { ExtractionResiliencePanel } from '@/components/ExtractionResiliencePanel';
 import { CATEGORIES, scoreLabel, scoreBand } from '@/lib/scanUtils';
 import { track } from '@/lib/track';
+import { FixGapsLink } from '@/components/FixGapsLink';
+import { fixHref } from '@/lib/fixLink';
 
 // ── Streaming progress ───────────────────────────────────────
 const STAGES = [
@@ -54,7 +56,7 @@ function ScanProgress({ stage, message }: { stage: StageKey | null; message: str
                 }`}
               />
               <span className={`text-xs transition-colors duration-300 ${
-                done ? 'text-slate-300' : 'text-slate-600'
+                done ? 'text-slate-300' : 'text-slate-400'
               }`}>
                 {s.label}
               </span>
@@ -210,9 +212,10 @@ function ScanPageInner() {
   }, []);
 
   const label = result ? scoreLabel(result.overallScore) : '';
+  const fix = fixHref({ url: scannedUrl, scanId });
 
   return (
-    <main className="min-h-screen bg-[#060d18] text-slate-100">
+    <main id="main-content" className="min-h-screen bg-[#060d18] text-slate-100">
       {/* Hero */}
       <section className="max-w-3xl mx-auto px-4 pt-20 pb-12 text-center">
         <div className="inline-flex items-center gap-2 bg-orange-500/10 border border-orange-500/20 rounded-full px-4 py-1.5 mb-6">
@@ -249,7 +252,7 @@ function ScanPageInner() {
           <button
             type="submit"
             disabled={loading || !url.trim()}
-            className="bg-orange-500 hover:bg-orange-400 disabled:bg-orange-500/40 disabled:cursor-not-allowed text-white font-semibold px-6 py-3 rounded-xl transition-colors whitespace-nowrap"
+            className="bg-orange-500 hover:bg-orange-400 disabled:bg-orange-500/40 disabled:cursor-not-allowed text-slate-950 font-semibold px-6 py-3 rounded-xl transition-colors whitespace-nowrap"
           >
             {loading ? 'Scanning…' : 'Scan Page'}
           </button>
@@ -269,7 +272,7 @@ function ScanPageInner() {
           <div className="bg-[#0d1525] border border-slate-800 rounded-2xl p-8 mb-8 flex flex-col sm:flex-row items-center gap-8">
             <ScoreGauge score={result.overallScore} />
             <div className="text-center sm:text-left">
-              <p className="text-xs font-mono text-slate-500 mb-1 truncate max-w-xs">
+              <p className="text-xs font-mono text-slate-400 mb-1 truncate max-w-xs">
                 {scannedUrl}
               </p>
               <h2 className="text-2xl font-bold mb-2">{label}</h2>
@@ -288,12 +291,7 @@ function ScanPageInner() {
                   Share this report ↗
                 </a>
               )}
-              <a
-                href="https://prequire.ai/#pricing"
-                className="bg-orange-500 hover:bg-orange-400 text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm"
-              >
-                Get full access →
-              </a>
+              <FixGapsLink href={fix} />
             </div>
           </div>
 
@@ -321,10 +319,12 @@ function ScanPageInner() {
             {CATEGORIES.map(({ key, label, icon }) => (
               <CategoryCard
                 key={key}
+                categoryKey={key}
                 label={label}
                 icon={icon}
                 data={result.categories[key]}
                 isUnlocked={false}
+                fixHref={fix}
               />
             ))}
           </div>
@@ -339,18 +339,13 @@ function ScanPageInner() {
           {/* Bottom CTA */}
           <div className="mt-10 bg-gradient-to-r from-orange-500/10 to-orange-600/5 border border-orange-500/20 rounded-2xl p-8 text-center">
             <h3 className="text-xl font-bold mb-2">
-              Ready to fix your AEO gaps?
+              Want help fixing these gaps?
             </h3>
             <p className="text-slate-400 text-sm mb-5">
-              Unlock all recommendations, track your score over time, and
-              extract shadow queries for your niche with a full Prequire account.
+              Prequire can scope and implement these fixes for you. Send us this
+              report and we will reply by email with options.
             </p>
-            <a
-              href="https://prequire.ai/#pricing"
-              className="inline-block bg-orange-500 hover:bg-orange-400 text-white font-semibold px-8 py-3 rounded-xl transition-colors"
-            >
-              See plans &amp; pricing
-            </a>
+            <FixGapsLink href={fix} label="Ask Prequire to fix these gaps" size="lg" />
           </div>
         </section>
       )}

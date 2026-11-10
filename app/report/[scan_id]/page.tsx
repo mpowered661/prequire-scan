@@ -4,6 +4,8 @@ import { getScanResult } from '@/lib/supabase/scanResults';
 import { ScoreGauge, CategoryCard } from '@/components/ScanDisplay';
 import { CATEGORIES, scoreLabel } from '@/lib/scanUtils';
 import { ExtractionResiliencePanel } from '@/components/ExtractionResiliencePanel';
+import { FixGapsLink } from '@/components/FixGapsLink';
+import { fixHref } from '@/lib/fixLink';
 import { parseExtractionResilience } from '@/lib/extraction-resilience/guard';
 
 interface Props {
@@ -20,17 +22,17 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const hostname = new URL(row.url).hostname;
   return {
     title: `AEO Report: ${hostname} — Prequire`,
-    description: `${hostname} scored ${row.overall_score}/100 for AI engine readiness. ${label}.`,
+    description: `${hostname} scored ${row.overall_score}/100 for citation readiness. ${label}.`,
     openGraph: {
-      title: `AEO Report: ${hostname} scores ${row.overall_score}/100`,
-      description: `${label}. See the full breakdown of content quality, schema markup, performance, and accessibility.`,
+      title: `AEO Report: ${hostname} — citation readiness ${row.overall_score}/100`,
+      description: `${label}. See the full breakdown of content quality, schema markup, performance, and static accessibility signals.`,
       url: `https://scan.prequire.ai/report/${scan_id}`,
       siteName: 'Prequire',
       type: 'website',
     },
     twitter: {
       card: 'summary',
-      title: `AEO Report: ${hostname} scores ${row.overall_score}/100`,
+      title: `AEO Report: ${hostname} — citation readiness ${row.overall_score}/100`,
       description: `${label}. See the full AEO breakdown.`,
     },
   };
@@ -44,6 +46,7 @@ export default async function ReportPage({ params }: Props) {
   const result = row.result_json;
   const resilience = parseExtractionResilience(result?.extraction_resilience);
   const label = scoreLabel(row.overall_score);
+  const fix = fixHref({ url: row.url, scanId: scan_id });
   const scannedAt = new Date(row.created_at).toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
@@ -51,7 +54,7 @@ export default async function ReportPage({ params }: Props) {
   });
 
   return (
-    <main className="min-h-screen bg-[#060d18] text-slate-100">
+    <main id="main-content" className="min-h-screen bg-[#060d18] text-slate-100">
       {/* Header */}
       <section className="max-w-5xl mx-auto px-4 pt-16 pb-10">
         <div className="flex items-center gap-2 mb-6">
@@ -63,18 +66,13 @@ export default async function ReportPage({ params }: Props) {
         <div className="bg-[#0d1525] border border-slate-800 rounded-2xl p-8 mb-8 flex flex-col sm:flex-row items-center gap-8">
           <ScoreGauge score={result.overallScore} />
           <div className="text-center sm:text-left flex-1">
-            <p className="text-xs font-mono text-slate-500 mb-1 truncate max-w-xs">{row.url}</p>
+            <p className="text-xs font-mono text-slate-400 mb-1 truncate max-w-xs">{row.url}</p>
             <h1 className="text-2xl font-bold mb-2">{label}</h1>
             <p className="text-slate-400 text-sm leading-relaxed max-w-md">{result.summary}</p>
-            <p className="text-xs text-slate-600 mt-3">Scanned {scannedAt}</p>
+            <p className="text-xs text-slate-400 mt-3">Scanned {scannedAt}</p>
           </div>
           <div className="sm:ml-auto flex-shrink-0">
-            <a
-              href="https://prequire.ai/#pricing"
-              className="bg-orange-500 hover:bg-orange-400 text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm"
-            >
-              Fix these gaps →
-            </a>
+            <FixGapsLink href={fix} />
           </div>
         </div>
 
@@ -83,10 +81,12 @@ export default async function ReportPage({ params }: Props) {
           {CATEGORIES.map(({ key, label: catLabel, icon }) => (
             <CategoryCard
               key={key}
+              categoryKey={key}
               label={catLabel}
               icon={icon}
               data={result.categories[key]}
               isUnlocked={false}
+              fixHref={fix}
             />
           ))}
         </div>
@@ -102,16 +102,11 @@ export default async function ReportPage({ params }: Props) {
 
         {/* Bottom CTA */}
         <div className="mt-10 bg-gradient-to-r from-orange-500/10 to-orange-600/5 border border-orange-500/20 rounded-2xl p-8 text-center">
-          <h2 className="text-xl font-bold mb-2">Ready to fix your AEO gaps?</h2>
+          <h2 className="text-xl font-bold mb-2">Want help fixing these gaps?</h2>
           <p className="text-slate-400 text-sm mb-5">
-            Unlock all recommendations, track your score over time, and publish atomic pages that AI engines cite.
+            Prequire can scope and implement these fixes for you. Send us this report and we will reply by email with options.
           </p>
-          <a
-            href="https://prequire.ai/#pricing"
-            className="inline-block bg-orange-500 hover:bg-orange-400 text-white font-semibold px-8 py-3 rounded-xl transition-colors"
-          >
-            See plans &amp; pricing
-          </a>
+          <FixGapsLink href={fix} label="Ask Prequire to fix these gaps" size="lg" />
         </div>
       </section>
     </main>

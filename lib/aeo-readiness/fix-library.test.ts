@@ -301,9 +301,12 @@ describe('generateFixes — server errors', () => {
     expect(fixes.some((f) => f.issue.toLowerCase().includes('error') || f.issue.toLowerCase().includes('timeout'))).toBe(true);
   });
 
-  it('marks server error fix critical when a critical bot is affected', () => {
+  // A failed simulated request is undeterminable, not a confirmed block: capped
+  // at high like refusals, below declared robots.txt/meta blocks.
+  it('caps server error fix at high when a critical bot is affected', () => {
     const fixes = generateFixes([serverError('GPTBot')], EMPTY_STACK);
     const fix = fixes.find((f) => f.issue.toLowerCase().includes('error') || f.issue.toLowerCase().includes('timeout'))!;
-    expect(fix.priority).toBe('critical');
+    expect(fix.priority).toBe('high');
+    expect(fix.fix_summary.toLowerCase()).toMatch(/not evidence/);
   });
 });

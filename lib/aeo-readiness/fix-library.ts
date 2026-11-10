@@ -14,6 +14,62 @@ function crawlerNames(results: CrawlerResult[]): string[] {
   return results.map((r) => r.crawler_name);
 }
 
+const SIMULATION_LIMIT =
+  'Simulated requests use crawler user-agents, not verified crawler IP addresses, so they cannot show how your security treats the real crawlers.';
+
+// Evidence first, then the narrowest change. Never a User-Agent-only exception:
+// anyone can send a crawler's user-agent, so such a rule weakens protection for
+// every impersonator. Re-running this check cannot confirm a fix — our simulated
+// requests are not verified crawlers — so confirmation comes from security logs.
+export function verifiedTrafficSteps(provider: string | null): string[] {
+  const noUaRule =
+    'Do not add rules that skip, bypass, or allowlist security based on the User-Agent alone — a user-agent can be faked by anyone';
+  const confirm =
+    'Confirm any change in your security logs (real crawler requests now allowed). Re-running this check will not confirm it, because our simulated requests are not verified crawlers';
+  const intentional =
+    'If you block AI crawlers on purpose, that is a business decision, not a defect — leave it in place';
+
+  if (provider === 'Cloudflare') {
+    return [
+      'In the Cloudflare dashboard, open Security → Events and filter for the affected crawlers to see how their real requests were handled',
+      'Look for requests Cloudflare identifies as verified bots (confirmed by IP address, not by the name a request claims). Requests that only claim a crawler name are not evidence about the real crawler',
+      'Only if verified crawler requests are being challenged or blocked: review your bot settings and allow verified bots (for example the "Allow verified bots" option where your plan offers it)',
+      intentional,
+      noUaRule,
+      confirm,
+    ];
+  }
+  if (provider === 'Wordfence') {
+    return [
+      'In WordPress, open Wordfence → Tools → Live Traffic and filter for the affected crawlers to see whether their requests were blocked',
+      'Check that a blocked request really came from the crawler, using the operator\'s published IP ranges or verification method where available',
+      'Only if verified crawler requests are blocked: add an exception for the operator\'s published IP ranges',
+      intentional,
+      noUaRule,
+      confirm,
+    ];
+  }
+  if (provider === 'Sucuri') {
+    return [
+      'In the Sucuri WAF dashboard (https://waf.sucuri.net), review the blocked-request logs for the affected crawlers',
+      'Check that a blocked request really came from the crawler, using the operator\'s published IP ranges (for example openai.com/gptbot for GPTBot)',
+      'Only if verified crawler requests are blocked: add the operator\'s published IP ranges to the IP Allowlist',
+      'If you also run the Sucuri WordPress plugin, it keeps a separate allowlist from the cloud WAF — check both',
+      intentional,
+      noUaRule,
+      confirm,
+    ];
+  }
+  return [
+    `Open the security or firewall logs for your ${provider ?? 'hosting, CDN, or security plugin'} and filter for the affected crawlers`,
+    'Check that a blocked or challenged request really came from the crawler, using the operator\'s published IP ranges or verification method where available',
+    'Only if verified crawler requests are blocked: use your provider\'s verified-bot setting or an exception for the operator\'s published IP ranges',
+    intentional,
+    noUaRule,
+    confirm,
+  ];
+}
+
 export function generateFixes(results: CrawlerResult[], stack: DetectedStack): Fix[] {
   const fixes: Fix[] = [];
 
@@ -57,39 +113,8 @@ export function generateFixes(results: CrawlerResult[], stack: DetectedStack): F
       priority: hasCritical(affected) ? 'high' : 'medium',
       issue: `HTTP ${statusCode} refusals to AI crawler user-agents (undeterminable)`,
       affected_crawlers: affected,
-      fix_summary: `${wafPhrase} returned HTTP ${statusCode} to ${affected.length} AI crawler user-agent simulation${affected.length > 1 ? 's' : ''}. This check cannot present verified crawler IP addresses, so it cannot determine whether the real crawlers are blocked — sites that verify crawler IPs may be filtering only impersonators. Check your firewall's security events for the real crawlers; if they are being refused, the steps below allowlist them.`,
-      fix_steps:
-        stack.waf === 'Cloudflare'
-          ? [
-              'Log in to the Cloudflare dashboard → Security → WAF',
-              'Create a Custom Rule: Field = User Agent, Operator = contains, add each bot name',
-              'Set the rule action to: Skip → WAF managed rules',
-              'Or go to Bots → Bot Fight Mode and enable "Allow Verified Bots"',
-              'Re-run this check to confirm bots are no longer blocked',
-            ]
-          : stack.waf === 'Wordfence'
-          ? [
-              'In WordPress, go to Wordfence → All Options → Rate Limiting',
-              'Add the affected bot User-Agent strings to the Allowlist',
-              'Or go to Wordfence → Firewall → Allowlisted IPs for known bot IP ranges',
-              'Re-run this check to confirm bots are no longer blocked',
-            ]
-          : stack.waf === 'Sucuri'
-          ? [
-              'Log in to the Sucuri WAF dashboard at https://waf.sucuri.net and select your website',
-              'Go to the Security tab → Allowlist — add each blocked crawler\'s exact User-Agent string as an allowlist entry',
-              'For IP-based allowlisting: find each crawler\'s published IP ranges (e.g., openai.com/gptbot for GPTBot, developers.facebook.com/docs/sharing/webmasters/crawler for Meta) and add them under the IP Allowlist',
-              'If blocking persists: go to Settings → Security Level — "Paranoid" or "High" can block bot traffic broadly; switch to "Custom" and add precise bypass rules for verified AI crawlers',
-              'Note: if you also have the Sucuri WordPress plugin installed, it has a separate allowlist from the cloud WAF — check WordPress admin → Sucuri Security → Firewall → Allowlist and configure both',
-              'Re-run this check to confirm bots are no longer blocked',
-            ]
-          : [
-              `Log in to your ${waf ?? 'firewall'} control panel`,
-              'Find the IP allowlist, User-Agent allowlist, or bot management settings',
-              `Add an exception for each blocked crawler's User-Agent string (listed above under "Affects")`,
-              'Consult your WAF documentation for the correct allowlist syntax',
-              'Re-run this check to confirm bots are no longer blocked',
-            ],
+      fix_summary: `${wafPhrase} returned HTTP ${statusCode} to ${affected.length} AI crawler user-agent simulation${affected.length > 1 ? 's' : ''}. This check cannot present verified crawler IP addresses, so it cannot determine whether the real crawlers are blocked — sites that verify crawler IPs may be filtering only impersonators. ${SIMULATION_LIMIT} Check how your firewall handled the real crawlers before changing anything.`,
+      fix_steps: verifiedTrafficSteps(stack.waf),
       fix_platform: stack.waf,
     });
   }
@@ -111,23 +136,10 @@ export function generateFixes(results: CrawlerResult[], stack: DetectedStack): F
       issue: 'Browser challenge served to AI crawler user-agents (undeterminable)',
       affected_crawlers: affected,
       fix_summary:
-        'AI crawler user-agent simulations received a browser-verification challenge page. Whether real, IP-verified crawlers receive the same challenge is undeterminable from this check. AI crawlers cannot execute JavaScript — if your bot protection does not exempt verified crawlers, they never pass the challenge. Confirm your provider\'s verified-bots setting is enabled.',
-      fix_steps:
-        stack.waf === 'Cloudflare' || stack.cdn === 'Cloudflare'
-          ? [
-              'Go to Cloudflare dashboard → Security → Bots',
-              'Enable Bot Fight Mode with "Allow Verified Bots" turned on',
-              'Or go to Security → WAF → Create Rule',
-              'Set: User Agent contains GPTBot → Action: Bypass → Browser Integrity Check',
-              'Repeat for ClaudeBot, PerplexityBot, and other affected bots',
-              'Re-run this check to confirm bots receive real page content',
-            ]
-          : [
-              'Identify what is serving the browser challenge (CDN, security plugin, or hosting)',
-              'Add exemptions for AI crawler User-Agent strings in your challenge rules',
-              'Verified AI crawlers like GPTBot and ClaudeBot should bypass JS challenges',
-              'Re-run this check to confirm bots receive real page content',
-            ],
+        `AI crawler user-agent simulations received a browser-verification challenge page. Whether real, IP-verified crawlers receive the same challenge is undeterminable from this check — many bot-protection services let verified crawlers through while challenging requests that only claim a crawler's name. ${SIMULATION_LIMIT} Check how the real crawlers were handled before changing anything.`,
+      fix_steps: verifiedTrafficSteps(
+        stack.waf === 'Cloudflare' || stack.cdn === 'Cloudflare' ? 'Cloudflare' : stack.waf ?? stack.cdn,
+      ),
       fix_platform: stack.waf ?? stack.cdn,
     });
   }
@@ -253,17 +265,17 @@ export function generateFixes(results: CrawlerResult[], stack: DetectedStack): F
   if (serverErrors.length > 0) {
     const affected = crawlerNames(serverErrors);
     fixes.push({
-      priority: topPriority(affected, 'high'),
-      issue: 'Connection errors or timeouts for AI crawlers',
+      // Undeterminable, like refusals: one failed simulated request is not
+      // evidence of blocking, so it never outranks a declared block.
+      priority: hasCritical(affected) ? 'high' : 'medium',
+      issue: 'Server errors or timeouts on simulated crawler requests (undeterminable)',
       affected_crawlers: affected,
-      fix_summary: `${affected.length} AI crawler${affected.length > 1 ? 's' : ''} received connection errors or timeouts. Your server may be blocking or throttling these requests at the network level.`,
+      fix_summary: `${affected.length} simulated AI crawler request${affected.length > 1 ? 's' : ''} got a server error or timed out. This can be temporary and is not evidence that the real crawlers are blocked.`,
       fix_steps: [
-        'Check your server error logs around the time of this scan',
-        'Test directly: curl -A "GPTBot/1.2" https://yourdomain.com and observe the response',
-        'Verify your hosting or CDN is not rate-limiting or dropping bot User-Agent traffic',
-        'If using Cloudflare, check Security Events for blocked requests from these crawlers',
-        'Ensure your server handles concurrent requests without timing out under crawler load',
-        'Re-run this check to confirm crawlers receive a valid response',
+        'Run this check again later — a temporary server or network error usually clears',
+        'If errors recur, check your server error logs around the time of the check',
+        'Check your hosting or CDN status and any rate limits applied to crawler traffic',
+        'Review your security logs to see whether the real, verified crawlers are receiving errors',
       ],
       fix_platform: stack.waf ?? stack.cdn,
     });

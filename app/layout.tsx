@@ -30,7 +30,16 @@ export default function RootLayout({
       lang="en"
       className={`${instrumentSerif.variable} ${plusJakarta.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {/* First focusable element on every page; each page's <main> carries the id. */}
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:bg-slate-100 focus:text-slate-950 focus:px-4 focus:py-2 focus:rounded-lg focus:outline focus:outline-2 focus:outline-orange-400"
+        >
+          Skip to main content
+        </a>
+        {children}
+      </body>
     </html>
   );
 }
