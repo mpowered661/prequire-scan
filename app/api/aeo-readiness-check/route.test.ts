@@ -24,6 +24,7 @@ describe('POST /api/aeo-readiness-check — egress guard', () => {
   it.each([
     'http://169.254.169.254/latest/meta-data/',
     'http://127.0.0.1/',
+    'http://localhost/', // resolves to loopback: refused by the DNS pre-check
     'http://localhost.localdomain.127.0.0.1.nip.io.invalid:22/',
     'http://10.0.0.1/',
     'http://[::1]/',

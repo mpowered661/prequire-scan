@@ -12,7 +12,7 @@ import { buildExtractionResilience } from '@/lib/extraction-resilience';
 import { resolveStudyAuth, buildStudyEnvelope } from '@/lib/study';
 import { logScanLead } from '@/lib/supabase/scanLeads';
 import { saveScanResult } from '@/lib/supabase/scanResults';
-import { safeFetch, validateTarget, EgressError } from '@/lib/egress';
+import { safeFetch, assertPublicTarget, EgressError } from '@/lib/egress';
 import { claimPaidScan, findRecentScan } from '@/lib/scanBudget';
 
 const SCAN_MODEL = 'claude-haiku-4-5-20251001';
@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
 
         // Destination policy before anything else: refused URLs cost nothing.
         try {
-          validateTarget(normalizedUrl);
+          await assertPublicTarget(normalizedUrl);
         } catch (e) {
           controller.enqueue(encode({ stage: 'error', message: e instanceof EgressError ? e.message : 'Invalid URL' }));
           controller.close();

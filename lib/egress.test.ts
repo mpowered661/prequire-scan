@@ -167,3 +167,25 @@ describe('httpHop against a real local server (lookup bypassed only by using a l
       await expect(httpHop(url, opts())).rejects.toBeInstanceOf(EgressError);
     }));
 });
+
+describe('assertPublicTarget — DNS pre-check before any route work', () => {
+  const fakeDns = (addrs: { address: string; family: number }[]) =>
+    ((_h: string, _o: unknown, cb: (e: null, a: typeof addrs) => void) => cb(null, addrs)) as never;
+
+  it('refuses a hostname that resolves to loopback/private (e.g. localhost)', async () => {
+    const { assertPublicTarget } = await import('./egress');
+    await expect(assertPublicTarget('http://localhost/', fakeDns([{ address: '127.0.0.1', family: 4 }]))).rejects.toThrow(/cannot be scanned/);
+    await expect(assertPublicTarget('http://intranet.example/', fakeDns([{ address: '10.1.1.1', family: 4 }]))).rejects.toThrow(/cannot be scanned/);
+  });
+
+  it('accepts a hostname that resolves only to public addresses', async () => {
+    const { assertPublicTarget } = await import('./egress');
+    expect((await assertPublicTarget('https://example.com/', fakeDns([{ address: '93.184.216.34', family: 4 }]))).hostname).toBe('example.com');
+  });
+
+  it('refuses an unresolvable host with a visitor-safe message', async () => {
+    const { assertPublicTarget } = await import('./egress');
+    const failing = ((_h: string, _o: unknown, cb: (e: NodeJS.ErrnoException) => void) => cb(Object.assign(new Error('x'), { code: 'ENOTFOUND' }))) as never;
+    await expect(assertPublicTarget('https://nope.example/', failing)).rejects.toThrow(/Could not resolve/);
+  });
+});

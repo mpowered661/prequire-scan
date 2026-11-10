@@ -78,6 +78,24 @@ export function validateTarget(raw: string): URL {
 
 const BLOCKED_MESSAGE = 'This address cannot be scanned. Only public websites are supported.';
 
+/**
+ * validateTarget plus a DNS pre-check: a host that resolves to any non-public address
+ * (e.g. localhost) is refused before a route does any work. The connect-time check in
+ * guardedLookup remains the authority; this only fails early and cheaply.
+ */
+export async function assertPublicTarget(raw: string, raw_lookup: RawLookup = dns.lookup as unknown as RawLookup): Promise<URL> {
+  const u = validateTarget(raw);
+  const host = u.hostname.replace(/^\[|\]$/g, '');
+  if (isIP(host)) return u; // literal already checked by validateTarget
+  const addresses = await new Promise<dns.LookupAddress[]>((resolve, reject) =>
+    raw_lookup(host, { all: true }, (err, a) => (err ? reject(new EgressError('Could not resolve this address.', `dns ${err.code ?? ''}`)) : resolve(a))),
+  );
+  if (!addresses.length || addresses.some((a) => !isPublicIp(a.address))) {
+    throw new EgressError(BLOCKED_MESSAGE, 'resolved to non-public IP (pre-check)');
+  }
+  return u;
+}
+
 type RawLookup = (
   hostname: string,
   options: { all: true; family?: number },

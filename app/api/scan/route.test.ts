@@ -29,10 +29,11 @@ vi.mock('@anthropic-ai/sdk', () => ({
 vi.mock('@/lib/supabase/scanLeads', () => ({ logScanLead: logScanLeadMock }));
 vi.mock('@/lib/supabase/scanResults', () => ({ saveScanResult: saveScanResultMock }));
 // Real validateTarget/EgressError; only the network hop is replaced.
-vi.mock('@/lib/egress', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/egress')>()),
-  safeFetch: safeFetchMock,
-}));
+vi.mock('@/lib/egress', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/egress')>();
+  // Static policy is real; the DNS pre-check is skipped so tests make no network lookups.
+  return { ...actual, safeFetch: safeFetchMock, assertPublicTarget: async (u: string) => actual.validateTarget(u) };
+});
 vi.mock('@/lib/scanBudget', () => ({ claimPaidScan: claimMock, findRecentScan: findRecentMock }));
 
 import { POST } from './route';

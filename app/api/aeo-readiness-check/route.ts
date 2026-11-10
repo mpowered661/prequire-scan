@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import { buildReport } from '@/lib/aeo-readiness/report-builder';
 import { resolveStudyAuth } from '@/lib/study';
 import { getServiceClient } from '@/lib/supabase/serviceClient';
-import { validateTarget, EgressError } from '@/lib/egress';
+import { assertPublicTarget, EgressError } from '@/lib/egress';
 
 const ANON_HOURLY  = 5;
 const ANON_DAILY   = 25;
@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
     try {
       const parsed = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`);
       normalizedUrl = parsed.toString();
-      validateTarget(normalizedUrl); // refuse private/metadata/non-web targets before any fetch
+      await assertPublicTarget(normalizedUrl); // refuse private/metadata/non-web targets (incl. by DNS) before any fetch
     } catch (e) {
       return NextResponse.json({ error: e instanceof EgressError ? e.message : 'Invalid URL' }, { status: 400 });
     }
