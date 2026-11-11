@@ -68,7 +68,7 @@ const SCAN: ScanResult = {
     schemaMarkup: category(92),
     performance: category(72),
     accessibility: {
-      score: 100,
+      score: null,
       checks: [
         ...['Heading Hierarchy', 'Alt Text', 'ARIA Landmarks', 'Semantic HTML and Form Labels'].map((label) => ({ label, status: 'pass' as const, detail: 'ok' })),
         ...['Color Contrast', 'Keyboard Navigation and Focus Management'].map((label) => ({ label, status: 'not_assessable' as const, detail: 'Not assessable from fetched HTML — requires a rendered-page audit.' })),

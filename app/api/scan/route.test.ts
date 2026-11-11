@@ -63,7 +63,7 @@ const SCAN_RESULT = {
   },
 };
 const EXPECTED_OVERALL = 80;
-const EXPECTED_A11Y = 84;
+const EXPECTED_A11Y = null; // accessibility is never scored (2026-11-11)
 
 /** Minimal stand-in for the only two NextRequest members the route touches. */
 function makeRequest(body: Record<string, unknown>, headers: Record<string, string> = {}): NextRequest {

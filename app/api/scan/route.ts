@@ -4,7 +4,6 @@ import {
   SCAN_SYSTEM_PROMPT,
   SCAN_PROMPT_VERSION,
   buildUserPrompt,
-  computeAccessibilityScore,
   computeOverallScore,
   ScanResult,
 } from '@/lib/scanPrompt';
@@ -202,14 +201,11 @@ export async function POST(req: NextRequest) {
           return;
         }
 
-        // Neither the model's overallScore nor its accessibility arithmetic is
-        // trusted: the accessibility category score is recomputed from check
-        // statuses (deterministic rubric), and overallScore from the
-        // content/schema/performance mean. Accessibility signals (LLM-judged
-        // from static HTML) are excluded from the overall score.
-        result.categories.accessibility.score = computeAccessibilityScore(
-          result.categories.accessibility.checks,
-        );
+        // The model's overallScore is not trusted: it is recomputed from the
+        // content/schema/performance mean. Accessibility signals (AI-judged from
+        // static HTML) are reported as signals only: any number the model returns
+        // is discarded and no accessibility score is stored (2026-11-11).
+        result.categories.accessibility.score = null;
         result.overallScore = computeOverallScore(result.categories);
         result.scan_meta = {
           prompt_version: SCAN_PROMPT_VERSION,

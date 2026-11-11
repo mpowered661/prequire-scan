@@ -1,6 +1,6 @@
 'use client';
 
-import type { ScanResult, CategoryResult, CheckItem } from '@/lib/scanPrompt';
+import type { ScanResult, CategoryResult, AccessibilityCategory, CheckItem } from '@/lib/scanPrompt';
 export type { ScanResult, CategoryResult, CheckItem };
 
 import {
@@ -89,11 +89,12 @@ export function CategoryCard({
   categoryKey: string;
   label: string;
   icon: string;
-  data: CategoryResult;
+  data: CategoryResult | AccessibilityCategory;
   isUnlocked: boolean;
   fixHref: string;
 }) {
-  const tone = scoreTone(data.score);
+  const score = data.score ?? 0;   // accessibility has no score and never shows one
+  const tone = scoreTone(score);
   // Static-HTML accessibility is shown as check counts with its limits stated,
   // never as a 0–100 bar that would read as a full accessibility audit.
   const isAccessibility = categoryKey === 'accessibility';
@@ -106,7 +107,7 @@ export function CategoryCard({
           <span className="text-xl" aria-hidden="true">{icon}</span>
           <h2 className="font-semibold text-slate-100 text-lg">{label}</h2>
         </div>
-        {!a11y && <span className={`text-2xl font-bold ${tone.text}`}>{data.score}</span>}
+        {!a11y && <span className={`text-2xl font-bold ${tone.text}`}>{score}</span>}
       </div>
 
       {a11y ? (
@@ -116,7 +117,7 @@ export function CategoryCard({
         </div>
       ) : (
         <div className="h-1.5 bg-slate-800 rounded-full mb-5 overflow-hidden">
-          <div className={`h-full ${tone.bar} rounded-full transition-all duration-1000 motion-reduce:transition-none`} style={{ width: `${data.score}%` }} />
+          <div className={`h-full ${tone.bar} rounded-full transition-all duration-1000 motion-reduce:transition-none`} style={{ width: `${score}%` }} />
         </div>
       )}
 

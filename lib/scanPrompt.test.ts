@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import * as scanPrompt from './scanPrompt';
 import {
-  computeAccessibilityScore,
   computeOverallScore,
   SCAN_SYSTEM_PROMPT,
   SCAN_PROMPT_VERSION,
@@ -27,7 +29,7 @@ function categories(
     contentQuality: cat(content),
     schemaMarkup: cat(schema),
     performance: cat(perf),
-    accessibility: cat(a11y),
+    accessibility: { ...cat(a11y), score: null },
   };
 }
 
@@ -58,40 +60,18 @@ describe('computeOverallScore', () => {
   });
 });
 
-// Server-side rubric — added after live verification caught the model returning
-// 92 for four passing checks (rubric says 96 + 4 bonus = 100).
-describe('computeAccessibilityScore', () => {
-  it('four passes = 96 base + 4 bonus = 100; not_assessable contributes nothing', () => {
-    const checks = [
-      check('pass'), check('pass'), check('pass'), check('pass'),
-      check('not_assessable'), check('not_assessable'),
-    ];
-    expect(computeAccessibilityScore(checks)).toBe(100);
+// 2026-11-11: accessibility is reported as signals only and never scored (scanner Phase 1,
+// SCANNER-RELEASE-GATE-2026-11-09). The 0-100 rubric number computed from AI-judged
+// static-HTML checks was still stored in result_json and reached the emailed report.
+describe('accessibility is never scored', () => {
+  it('the scoring function no longer exists', () => {
+    expect(scanPrompt).not.toHaveProperty('computeAccessibilityScore');
   });
 
-  it('warn is half credit, fail is zero, no bonus unless all pass', () => {
-    // 24 + 12 + 0 + 24 = 60, no bonus
-    expect(
-      computeAccessibilityScore([
-        check('pass'), check('warn'), check('fail'), check('pass'),
-        check('not_assessable'), check('not_assessable'),
-      ]),
-    ).toBe(60);
-  });
-
-  it('all fail = 0; no scored checks = 0', () => {
-    expect(
-      computeAccessibilityScore([check('fail'), check('fail'), check('fail'), check('fail')]),
-    ).toBe(0);
-    expect(computeAccessibilityScore([check('not_assessable'), check('not_assessable')])).toBe(0);
-    expect(computeAccessibilityScore([])).toBe(0);
-  });
-
-  it('is deterministic and bounded to 0-100', () => {
-    const checks = [check('pass'), check('pass'), check('pass'), check('pass')];
-    const runs = Array.from({ length: 5 }, () => computeAccessibilityScore(checks));
-    expect(new Set(runs).size).toBe(1);
-    expect(runs[0]).toBeLessThanOrEqual(100);
+  it('the scan route stores no accessibility score and discards the model number', () => {
+    const route = readFileSync(path.resolve(__dirname, '..', 'app', 'api', 'scan', 'route.ts'), 'utf8');
+    expect(route).toMatch(/result\.categories\.accessibility\.score = null;/);
+    expect(route).not.toMatch(/computeAccessibilityScore/);
   });
 });
 
