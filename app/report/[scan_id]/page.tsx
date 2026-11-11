@@ -25,7 +25,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     description: `${hostname} scored ${row.overall_score}/100 for citation readiness. ${label}.`,
     openGraph: {
       title: `AEO Report: ${hostname} — citation readiness ${row.overall_score}/100`,
-      description: `${label}. See the full breakdown of content quality, schema markup, performance, and static accessibility signals.`,
+      description: `${label}. See the full breakdown of content quality, schema markup, estimated performance, and static accessibility signals.`,
       url: `https://scan.prequire.ai/report/${scan_id}`,
       siteName: 'Prequire',
       type: 'website',

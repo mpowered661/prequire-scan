@@ -81,7 +81,7 @@ export function generateFixes(results: CrawlerResult[], stack: DetectedStack): F
       priority: topPriority(affected),
       issue: 'AI crawlers blocked by robots.txt',
       affected_crawlers: affected,
-      fix_summary: `Your robots.txt is blocking ${affected.length} AI crawler${affected.length > 1 ? 's' : ''}. These bots cannot read your content and AI engines will not cite you.`,
+      fix_summary: `Your robots.txt disallows ${affected.length} AI crawler${affected.length > 1 ? 's' : ''} (${affected.join(', ')}), so ${affected.length > 1 ? 'they' : 'it'} will not fetch the disallowed pages. Training crawlers (such as GPTBot) are separate from the crawlers some assistants use to answer questions (such as OAI-SearchBot), so check which ones you mean to block. This is not a measure of whether any assistant mentions you.`,
       fix_steps: [
         'Open your robots.txt file (yourdomain.com/robots.txt)',
         'Locate any Disallow rules that apply to these bots or a wildcard (*) Disallow: / rule',
@@ -212,17 +212,17 @@ export function generateFixes(results: CrawlerResult[], stack: DetectedStack): F
 
     fixes.push({
       priority: topPriority(affected, 'medium'),
-      issue: 'Content invisible to AI crawlers — page is client-side rendered',
+      issue: 'Most content loads with JavaScript — page is client-side rendered',
       affected_crawlers: affected,
-      fix_summary: `When a human visits this page, their browser downloads ${htmlDesc} of HTML and then executes JavaScript to load the actual content. AI crawlers do not execute JavaScript — they only read the initial HTML response. Right now they see ${textDesc} of readable text (${ratioStr}% of the page), primarily <script> and <link> tags pointing to JavaScript bundles. Everything humans see after page load — headings, body copy, FAQs, structured data — is invisible to AI engines.`,
+      fix_summary: `When a human visits this page, their browser downloads ${htmlDesc} of HTML and then executes JavaScript to load the actual content. Some AI crawlers read only the initial HTML response and may not run JavaScript. In that response they see ${textDesc} of readable text (${ratioStr}% of the page), primarily <script> and <link> tags pointing to JavaScript bundles. Content added after page load (headings, body copy, FAQs, structured data) may not be available to those crawlers.`,
       fix_steps: [
         `Verify the problem: curl -sA "GPTBot/1.2" https://yourdomain.com and compare what you see to your browser view. If the output has no <h1>, <p>, or article text in the HTML source, bots are receiving an empty shell.`,
         `Check your ratio: curl -s https://yourdomain.com | wc -c gives total bytes. If the response is mostly <script src="..."> tags with little readable text, that confirms client-side rendering.`,
         ...platformSteps,
-        `Interim fix — add JSON-LD structured data: Even a near-empty page can include <script type="application/ld+json"> in the server-rendered <head>. AI crawlers extract JSON-LD schema (Article, Person, Organization, FAQPage) and use it for citations even when the visible body is empty. Use schema.org/Article for content pages, schema.org/Person or Organization for brand pages.`,
-        `Interim fix — add a <noscript> block: Place a concise summary of your page's key content inside <noscript>...</noscript> in your HTML template. AI crawlers read noscript content. Include your core value proposition, main topics, and one call to action (under 400 words).`,
+        `Interim fix — add JSON-LD structured data: Even a near-empty page can include <script type="application/ld+json"> in the server-rendered <head>. Crawlers that read the initial HTML can extract JSON-LD schema (Article, Person, Organization, FAQPage), which states key facts even when the visible body is empty. It does not guarantee how any assistant uses it. Use schema.org/Article for content pages, schema.org/Person or Organization for brand pages.`,
+        `Interim fix — add a <noscript> block: Place a concise summary of your page's key content inside <noscript>...</noscript> in your HTML template. Crawlers that do not run JavaScript can read noscript content. Include your core value proposition, main topics, and one call to action (under 400 words).`,
         `After deploying SSR: run curl -sA "GPTBot/1.2" https://yourdomain.com and confirm that <h1>, <p> tags, and your main content appear directly in the HTML source — not behind script tags.`,
-        'Re-run this AEO check to confirm the fix — the text/HTML ratio should rise above 5% and your score will increase',
+        'Re-run this AEO check to confirm the fix: the text/HTML ratio should rise above 5% and this client-side rendering warning should clear',
       ],
       fix_platform: stack.cms,
     });

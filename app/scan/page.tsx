@@ -232,8 +232,8 @@ function ScanPageInner() {
         </h1>
 
         <p className="text-slate-400 text-lg mb-10">
-          Paste any URL. Get a free AEO score across 4 categories — content,
-          schema, performance, and accessibility.
+          Paste any URL. Get a free AEO readiness score from content and schema
+          signals and an estimated performance read, plus static accessibility signals shown separately.
         </p>
 
         {/* Input form */}

@@ -17,7 +17,7 @@ const plusJakarta = Plus_Jakarta_Sans({
 export const metadata: Metadata = {
   title: "Free AEO Score — Prequire",
   description:
-    "Scan any URL and get a free AEO score across content, schema, performance, and accessibility.",
+    "Scan any URL and get a free AEO readiness score from content, schema and estimated performance, plus static accessibility signals shown separately.",
 };
 
 export default function RootLayout({

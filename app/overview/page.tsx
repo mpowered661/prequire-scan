@@ -315,9 +315,10 @@ function OverviewPageInner() {
           <div className="bg-[#0d1525] border border-slate-800 rounded-2xl p-6 flex flex-col gap-4">
             <div>
               <p className="text-xs font-mono text-orange-400 uppercase tracking-wider mb-1">
-                AEO Readiness and Visibility Check
+                AEO Readiness: AI Crawler Access Check
               </p>
-              <p className="text-sm text-slate-400">Can AI engines reach and read your site?</p>
+              <p className="text-sm text-slate-400">Can AI crawlers fetch your pages? (simulated by user agent)</p>
+              <p className="text-xs text-slate-400">Whether AI assistants mention you, or describe you accurately, is not measured by this scan.</p>
             </div>
 
             {vis.status === 'idle' && (
@@ -519,7 +520,7 @@ function OverviewPageInner() {
 
                 {visBlocked && (
                   <p className="text-xs text-yellow-400">
-                    Note: some AI crawlers are blocked — citation potential may be limited until visibility is fixed.
+                    Note: some AI crawlers are disallowed or blocked, so they can&apos;t collect the affected pages. This is not a measure of whether AI assistants mention you.
                   </p>
                 )}
 

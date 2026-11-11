@@ -47,14 +47,15 @@ function EntryPageInner() {
         </div>
 
         <h1 className="text-4xl sm:text-5xl font-bold mb-4 leading-tight">
-          Can AI find your site,
+          Can AI crawlers reach your site,
           <br />
-          <span className="text-orange-400">and will it cite it?</span>
+          <span className="text-orange-400">and can they read it?</span>
         </h1>
 
         <p className="text-slate-400 text-lg mb-10">
-          Two checks. One score. See if ChatGPT, Claude, and Perplexity
-          can reach and cite your content.
+          Two checks. One score. A simulated check of whether AI crawlers may fetch and read your pages,
+          and an estimate of how clearly your content states its facts.
+          {' '}It does not show whether any AI assistant cites or recommends you.
         </p>
 
         {/* Input */}
@@ -79,18 +80,18 @@ function EntryPageInner() {
         <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl mx-auto text-left">
           <div className="bg-[#0d1525] border border-slate-800 rounded-xl p-4">
             <p className="text-xs font-mono text-orange-400 uppercase tracking-wider mb-1">
-              Visibility Check
+              Crawler Access Check
             </p>
             <p className="text-sm text-slate-300">
-              Can AI engines reach and read your site?
+              Can AI crawlers fetch your pages? (simulated by user agent)
             </p>
           </div>
           <div className="bg-[#0d1525] border border-slate-800 rounded-xl p-4">
             <p className="text-xs font-mono text-orange-400 uppercase tracking-wider mb-1">
-              Citation Check
+              Citation Readiness Check
             </p>
             <p className="text-sm text-slate-300">
-              Is your content built to get cited?
+              How clearly does your page state its facts? (an estimate; AI answers are not tested)
             </p>
           </div>
         </div>
